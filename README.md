@@ -133,11 +133,11 @@ Mục `External` để trống nghĩa là không có kết nối ra ngoài máy.
 `search_notes` chạy theo thứ tự:
 
 - Khớp nguyên văn cụm từ trước.
-- Sau đó semantic search bằng bge-m3 (cross-language, câu tiếng Việt tìm được đoạn tiếng Anh), kết hợp xếp hạng trang theo keyword.
+- Sau đó hybrid search trên index SQLite bền vững (`~/Library/Application Support/jan-vision-docs/index.sqlite`, đổi bằng env `PDF_OCR_INDEX`): vector bge-m3 (cross-language) + BM25 (FTS5), gộp bằng RRF. Index dựng lúc ingest (web UI) hoặc lần search đầu, chỉ cập nhật note đổi `(mtime, size)`; mỗi query chỉ tốn 1 embedding.
 - Ngưỡng semantic: `SEM_STRONG = 0.60`, `SEM_LOW = 0.52` (dưới `SEM_LOW` coi như không có). Hiệu chỉnh trên vault thật: query rác hoặc lạc đề tối đa 0.566, query có nội dung thật từ 0.67 trở lên.
-- Keyword mode: trang phải phủ ≥ 60% trọng số IDF của query (từ hiếm như tên riêng bắt buộc có, âm tiết phổ biến như "doanh thu", "năm" nhẹ); tokenizer nhận cả số (`12,8`, `18%`, `2026`).
+- Kết quả BM25 chỉ được tin khi mọi từ khoá đều có trong index và chunk phủ ≥ 60% trọng số IDF của query (từ hiếm như tên riêng bắt buộc có, âm tiết phổ biến nhẹ). Mode `hybrid` khi cosine ≥ `SEM_STRONG` hoặc có chunk BM25 đáng tin; `semantic-low` khi chỉ qua `SEM_LOW`.
 - YAML frontmatter bị loại khỏi index; excerpt cắt theo đoạn, heading `## Trang N` hoặc `---`.
-- `search_pdf`: nếu PDF đã nạp thì dùng lại note trong Vault (nhanh, semantic); chưa nạp thì OCR rồi khớp nguyên văn (~0.5s/trang). Không tìm được file thì tự rơi về `search_notes`.
+- `search_pdf`: nếu PDF đã nạp thì dùng lại note trong Vault (nhanh, hybrid); chưa nạp thì OCR rồi khớp nguyên văn (~0.5s/trang). Không tìm được file thì tự rơi về `search_notes`.
 
 ## Xử lý sự cố
 

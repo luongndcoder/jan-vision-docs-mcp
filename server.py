@@ -572,13 +572,12 @@ def search_notes(query: str, max_hits: int = 6) -> str:
     QUESTIONS - you do NOT need to shorten or rephrase:
       1) tries the whole query as an exact phrase first (mode
          "exact-phrase"); if it matches, that is returned directly;
-      2) otherwise runs a SEMANTIC cross-language search (local bge-m3
-         embeddings) - a VIETNAMESE question WILL match ENGLISH notes by
-         meaning, no translation needed - together with keyword
-         page-ranking. Response "mode" is one of:
-           "semantic"        strong semantic matches;
-           "semantic-low"    weak semantic matches, keyword hits weaker;
-           "keywords-ranked" keyword hits (may carry "semantic_low_results");
+      2) otherwise runs a HYBRID search over a persistent index: local
+         bge-m3 embeddings (cross-language - a VIETNAMESE question WILL
+         match ENGLISH notes by meaning, no translation needed) fused
+         with BM25 keywords. Response "mode" is one of:
+           "hybrid"          meaning + keyword matches, best first;
+           "semantic-low"    weak semantic matches only;
            "keywords+semantic" with matches 0 - nothing found.
     Each result carries "file" and "page" - always report the page number
     to the user when quoting.

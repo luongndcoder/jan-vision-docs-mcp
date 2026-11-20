@@ -584,10 +584,9 @@ def search_notes(query: str, vault_root: str | None = None,
                  pages: tuple[int, int] | None = None) -> str:
     """Search across Vault .md notes (Inbox/ + Notes/, skip Attachments).
       1) EXACT PHRASE: whole query as substring - try first, return if hit.
-      2) SEMANTIC (bge-m3) + KEYWORDS RANK (per page, stopwords removed).
-         Strong semantic (>=SEM_STRONG) wins; weak (>=SEM_LOW) wins only
-         when keyword overlap < 50%; otherwise keyword pages are returned.
-         Embed server is always waited for (prewarmed at MCP startup).
+      2) HYBRID via search_index (persistent SQLite: bge-m3 vectors +
+         FTS5 BM25, fused with RRF). Modes: hybrid / semantic-low /
+         keywords+semantic (0 matches). Index is refreshed incrementally.
     only_file / pages: restrict to one note and a page range (search_pdf).
     Returns mode, file, page, excerpt per hit (+ semantic_error on failure).
     """
@@ -634,144 +633,44 @@ def search_notes(query: str, vault_root: str | None = None,
                            "matches": len(hits), "results": hits},
                           ensure_ascii=False, indent=1)
 
-    # ---------- mode 2: per-page keyword ranking ----------
-    STOP = {"and", "for", "the", "with", "from", "và", "của", "cho", "trong",
-            "các", "có", "được", "là", "về", "một", "này", "that", "this",
-            "then", "into", "tôi", "anh", "em", "you", "your"}
-    _TOK = r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ\w]{3,}|\d[\d.,%]*"
-    words = [w for w in _re.findall(_TOK, q)
-             if w not in STOP]
-    _PAGE_RE = _re.compile(r"^## Trang (\d+)\s*$", _re.M)
-    cands = []  # (distinct, total, file, page, first_idx, seg_txt, words)
-    df: dict[str, int] = {}  # số trang chứa từng từ khoá (để tính IDF)
-    n_pages = 0
-    for sub in (("Notes", "Inbox") if words else ()):
-        d = os.path.join(vault, sub)
-        if not os.path.isdir(d):
-            continue
-        for name in sorted(os.listdir(d)):
-            if not name.lower().endswith(".md"):
-                continue
-            fp = os.path.join(d, name)
-            if only_file and fp != only_file:
-                continue
-            txt = _read_note(fp)
-            marks = list(_PAGE_RE.finditer(txt))
-            if marks:
-                bounds = [(0, marks[0].start(), "")]
-                for k, mm in enumerate(marks):
-                    end = marks[k + 1].start() if k + 1 < len(marks) else len(txt)
-                    bounds.append((mm.end(), end, mm.group(1)))
-            else:
-                bounds = [(0, len(txt), "")]
-            for a, b, pno in bounds:
-                seg = txt[a:b].lower()
-                if not seg.strip():
-                    continue
-                words_present = [w for w in words if w in seg]
-                n_pages += 1
-                for w in words_present:
-                    df[w] = df.get(w, 0) + 1
-                if not words_present or not _in_range(pno):
-                    continue
-                total = sum(seg.count(w) for w in words_present)
-                cands.append((len(words_present), total, fp, pno, a, txt[a:b],
-                              words_present))
-    # Trang phải phủ >= 60% "trọng lượng" query theo IDF. Âm tiết tiếng Việt
-    # phổ biến ("doanh", "thu", "năm", "công") khớp substring khắp nơi nên nhẹ;
-    # từ hiếm / tên riêng ("nike") nặng — thiếu nó thì trang không đạt.
-    import math as _m
-    wt = {w: _m.log((n_pages + 1) / (df.get(w, 0) + 1)) + 0.1 for w in words}
-    need = 0.6 * sum(wt.values())
-    # Từ khoá không xuất hiện ở BẤT KỲ trang nào (thường là thực thể chính:
-    # "coteccons", "nike") -> trang khớp các từ còn lại không trả lời được
-    # câu hỏi; bỏ tầng keyword, chỉ tin semantic. (Vault trộn Việt/Anh làm
-    # IDF của từ tiếng Việt phổ thông bị thổi phồng nên IDF một mình chưa đủ.)
-    absent = [w for w in words if not df.get(w)]
-    scored = []
-    for r in ([] if absent else cands):
-        cov = sum(wt[w] for w in r[6])
-        if cov >= need:
-            scored.append(r + (cov,))
-    scored.sort(key=lambda r: (-r[7], -r[1]))
-
-    # TIER 3(a): thử semantic trước khi trả keyword. Lý do: (1) model nhỏ
-    # (Jan 4B) hay tự rút gọn câu hỏi thành 2-3 từ; (2) keyword mode match
-    # substring nên dễ ăn point oan ("bắt" + "bắt đầu"); (3) vault đa ngôn
-    # ngữ nên VI<->EN phải đi qua bge-m3. LUÔN chờ embed server (MCP server
-    # đã prewarm lúc khởi động): câu tiếng Việt dài gần như luôn có keyword
-    # hit rác (âm tiết phổ biến), nên "keyword có kết quả" KHÔNG phải lý do
-    # để bỏ semantic.
-    _kw_ratio = (scored[0][0] / len(words)) if scored else 0.0
-    _sem, _sem_err = None, None
+    # ---------- mode 2: hybrid index (vector + BM25, RRF) ----------
+    import search_index
+    err, res = None, None
     try:
-        _sem = _semantic_search_notes(query, vault,
-                                      top_k=max(1, min(max_hits, 6)),
-                                      thresh=SEM_LOW, only_file=only_file)
-        if _sem and pages:
-            _sem = [r for r in _sem if _in_range(r.get("page"))] or None
-    except Exception as e:  # embed server lỗi / timeout / thiếu model
-        _sem_err = f"{type(e).__name__}: {e}"
-        print(f"[search_notes] semantic search failed: {_sem_err}",
-              file=sys.stderr)
-    _top = _sem[0].get("score", 0) if _sem else 0.0
-
-    def _out(payload: dict) -> str:
-        payload = {"query": query, **payload}
-        if _sem_err:
-            payload["semantic_error"] = _sem_err
-        return json.dumps(payload, ensure_ascii=False, indent=1)
-
-    if _top >= SEM_STRONG:
-        return _out({"mode": "semantic",
-                     "note": ("SEMANTIC results, cross-language, ranked by "
-                              "meaning (best first). Each result gives file, "
-                              "page and score."),
-                     "matches": len(_sem), "results": _sem})
-    # Semantic yếu: chỉ ưu tiên khi keyword cũng yếu (< nửa số từ khoá).
-    if _top >= SEM_LOW and _kw_ratio < 0.5:
-        return _out({"mode": "semantic-low",
-                     "note": ("LOW-CONFIDENCE semantic matches (scores are "
-                              "modest; the content may only be loosely "
-                              "related). Cross-language, ranked by meaning. "
-                              "If nothing below is relevant, the content is "
-                              "probably not in the vault. Each result gives "
-                              "file and page."),
-                     "matches": len(_sem), "results": _sem})
-
-    results = []
-    for distinct, total, fp, pno, a, seg, wp, _cov in scored[:max(1, max_hits)]:
-        paragraphs = [p.strip() for p in seg.split("\n\n") if p.strip()]
-        best_paras = [p[:500] for p in paragraphs
-                      if any(w in p.lower() for w in wp)][:2]
-        if not best_paras:
-            best_paras = [" ".join(seg.split())[:500]]
-        results.append({"file": fp, "page": pno,
-                        "matched_keywords": wp,
-                        "keyword_score": f"{distinct}/{len(words)} words",
-                        "excerpt": "\n\n".join(best_paras)})
-    if results:
-        payload = {"mode": "keywords-ranked",
-                   "note": ("exact phrase not found - ranked best PAGES by "
-                            "keyword overlap"),
-                   "keywords": words, "matches": len(results),
-                   "results": results}
-        if _sem:  # semantic-low nhưng keyword mạnh hơn -> đính kèm tham khảo
-            payload["semantic_low_results"] = _sem
-        return _out(payload)
-
-    if _sem_err:
-        hint = ("Keyword search found nothing and semantic search FAILED "
-                "(see semantic_error) - absence is NOT confirmed.")
-    elif not words:
-        hint = ("No usable keywords in query and semantic search found "
-                "nothing above threshold.")
+        res = search_index.search(query, vault, only_file=only_file,
+                                  pages=pages, k=max(1, min(max_hits, 6)))
+    except Exception as e:  # embed server lỗi / timeout / thiếu model / DB lỗi
+        err = f"{type(e).__name__}: {e}"
+        print(f"[search_notes] hybrid search failed: {err}", file=sys.stderr)
+    out: dict = {"query": query}
+    results = (res or {}).get("results") or []
+    mode = (res or {}).get("mode")
+    if results and mode == "hybrid":
+        out.update(mode="hybrid",
+                   note=("Ranked by meaning (cross-language) + keywords. "
+                         "Each result gives file, page, score."),
+                   matches=len(results), results=results)
+    elif results and mode == "semantic-low":
+        out.update(mode="semantic-low",
+                   note=("LOW-CONFIDENCE semantic matches (scores are "
+                         "modest; the content may only be loosely "
+                         "related). Cross-language, ranked by meaning. "
+                         "If nothing below is relevant, the content is "
+                         "probably not in the vault. Each result gives "
+                         "file and page."),
+                   matches=len(results), results=results)
     else:
-        hint = ("Not found by phrase, keywords or semantic search "
-                "(above threshold). The content is very likely absent "
-                "from the vault notes.")
-    return _out({"mode": "keywords+semantic", "matches": 0, "results": [],
-                 "hint": hint})
+        if err:
+            hint = ("Search FAILED (see semantic_error) - absence is "
+                    "NOT confirmed.")
+        else:
+            hint = ("Not found by phrase, keywords or semantic search "
+                    "(above threshold). The content is very likely absent "
+                    "from the vault notes.")
+        out.update(mode="keywords+semantic", matches=0, results=[], hint=hint)
+    if err:
+        out["semantic_error"] = err
+    return json.dumps(out, ensure_ascii=False, indent=1)
 
 
 # ---------------------------------------------------------------------------
@@ -779,7 +678,6 @@ def search_notes(query: str, vault_root: str | None = None,
 # ---------------------------------------------------------------------------
 
 import json as _json
-import math as _math
 import re as _re
 import subprocess as _sp2
 import time as _time
@@ -872,130 +770,3 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
         d_sorted = sorted(d["data"], key=lambda x: x["index"])
         out.extend(item["embedding"] for item in d_sorted)
     return out
-
-
-def _vault_page_vectors(vault: str) -> dict[int, list]:
-    """Embed tung TRANG cua moi note vault (cache theo mtime). Tra ve
-    {file_path: {"mtime":..., "pages":[(page_no, page_text, vector), ...]}}"""
-    os.makedirs(_EMB_CACHE_DIR, exist_ok=True)
-    cache_fp = os.path.join(_EMB_CACHE_DIR, "vault_index.json")
-    cache: dict = {}
-    if os.path.isfile(cache_fp):
-        try:
-            cache = _json.load(open(cache_fp))
-        except Exception:
-            cache = {}
-
-    page_re = _re.compile(r"^## Trang (\d+)\s*$", _re.M)
-    for sub in ("Notes", "Inbox"):
-        d = os.path.join(vault, sub)
-        if not os.path.isdir(d):
-            continue
-        for name in sorted(os.listdir(d)):
-            if not name.lower().endswith(".md"):
-                continue
-            fp = os.path.join(d, name)
-            mtime = os.path.getmtime(fp)
-            ent = cache.get(fp)
-            if ent and ent.get("mtime") == mtime:
-                continue  # cache con崭 nguyên
-            txt = _read_note(fp)
-            marks = list(page_re.finditer(txt))
-            segs: list[tuple[str, str]] = []
-            if marks:
-                pre = txt[:marks[0].start()].strip()
-                if pre:
-                    segs.append(("", pre))
-                for k, mm in enumerate(marks):
-                    end = marks[k + 1].start() if k + 1 < len(marks) else len(txt)
-                    segs.append((mm.group(1), txt[mm.end():end].strip()))
-            else:
-                segs.append(("", txt.strip()))
-            segs = [(p, t) for p, t in segs if len(t) >= 30]
-            vectors = _embed_texts([t for _, t in segs])
-            cache[fp] = {"mtime": mtime,
-                         "pages": [{"p": p, "t": t, "v": [round(x, 4) for x in v]}
-                                   for (p, t), v in zip(segs, vectors)]}
-    # note đã xoá/di chuyển -> bỏ vector cũ, kẻo search_notes trả kết quả
-    # từ tài liệu không còn tồn tại
-    for fp in [k for k in cache if not os.path.isfile(k)]:
-        del cache[fp]
-    tmp = cache_fp + ".tmp"
-    _json.dump(cache, open(tmp, "w"))
-    os.replace(tmp, cache_fp)
-    return cache
-
-
-def _cosine(a, b) -> float:
-    na = _math.sqrt(sum(x * x for x in a))
-    nb = _math.sqrt(sum(x * x for x in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return sum(x * y for x, y in zip(a, b)) / (na * nb)
-
-
-def _windows(text: str, max_chars: int = 800) -> list[str]:
-    """Cat trang OCR thanh cua so chuoi dong, ~max_chars, gian lan 2 dong."""
-    lines = text.split("\n")
-    wins, cur = [], ""
-    i = 0
-    while i < len(lines):
-        chunk = "\n".join(lines[i:i + 4])
-        if not chunk.strip():
-            i += 4
-            continue
-        wins.append(chunk)
-        i += 3  # gian lan 2 dong
-    return [w for w in wins if len(w.strip()) >= 60]
-
-
-def _semantic_search_notes(query: str, vault: str,
-                           top_k: int = 6, thresh: float = SEM_LOW,
-                           wait_for_server: bool = True,
-                           only_file: str | None = None):
-    """Hai chang:
-      1) rank TRANG bang embedding (cache);
-      2) ZOOM-IN: voi top trang, embed tung cua so ~4 dong va tra ve cua so
-         khop nghia nhat. Excerpt do chinh xac hon cau lap.
-    Tra ve list {file, page, score, excerpt} hoac None."""
-    if not _ensure_embed_server(wait=wait_for_server):
-        return None
-    qv = _embed_texts([query])[0]
-    cache = _vault_page_vectors(vault)
-    pages = []
-    for fp, ent in cache.items():
-        if only_file and fp != only_file:
-            continue
-        for pg in ent.get("pages", []):
-            score = _cosine(qv, pg["v"])
-            pages.append((score, fp, pg.get("p", ""), pg.get("t", "")))
-    pages.sort(key=lambda r: -r[0])
-    cand = [r for r in pages[:10] if r[0] >= 0.30]
-    if not cand:
-        return None
-    # ZOOM: embed tat ca cua so cua cac ung vien trang
-    win_list = []   # (file, page, window_text)
-    for score, fp, p, t in cand:
-        for w in _windows(t):
-            win_list.append((fp, p, w))
-    if not win_list:
-        return None
-    wvecs = _embed_texts([w[:1400] for _, _, w in win_list])
-    scored = []
-    for (fp, p, w), v in zip(win_list, wvecs):
-        ws = _cosine(qv, v)
-        if ws >= thresh:
-            scored.append((ws, fp, p, w))
-    scored.sort(key=lambda r: -r[0])
-    results = []
-    per_page: dict = {}
-    for ws, fp, p, w in scored:
-        n_this_page = per_page.get((fp, p), 0)
-        if n_this_page >= 2:          # toi da 2 cua so chien nguoc cua 1 trang
-            continue
-        per_page[(fp, p)] = n_this_page + 1
-        results.append({"file": fp, "page": p, "score": round(ws, 3),
-                        "excerpt": (" ".join(w.split()))[:900]})
-        if len(results) >= top_k:
-            break
-    return results or None

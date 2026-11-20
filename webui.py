@@ -79,6 +79,11 @@ def _worker() -> None:
             job["status"] = "done"
             job["note"] = os.path.basename(r.get("written", ""))
             job["seconds"] = round(time.time() - t0, 1)
+            try:
+                import search_index
+                search_index.ensure(se.VAULT_DEFAULT)
+            except Exception as e:  # noqa BLE001 — index refresh is non-fatal
+                print(f"[webui] index update failed: {e}", flush=True)
             # move original next to the vault like the folder watcher does
             done_dir = os.path.join(se.VAULT_DEFAULT, "_done_web")
             try:
@@ -94,6 +99,20 @@ def _worker() -> None:
 
 
 threading.Thread(target=_worker, daemon=True).start()
+
+
+def _initial_index() -> None:
+    try:
+        import sys
+        sys.path.insert(0, HERE)
+        import server_extra
+        import search_index
+        search_index.ensure(server_extra.VAULT_DEFAULT)
+    except Exception as e:  # noqa BLE001 — non-fatal
+        print(f"[webui] initial index failed: {e}", flush=True)
+
+
+threading.Thread(target=_initial_index, daemon=True).start()
 
 
 @app.get("/healthz")
