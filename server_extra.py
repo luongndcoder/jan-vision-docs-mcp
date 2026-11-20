@@ -440,14 +440,155 @@ def batch_ingest(folder: str, vault_root: str | None = None,
 # search_notes: keyword search tren Vault .md (da OCR san — khong ton OCR)
 # ---------------------------------------------------------------------------
 
+# Ngưỡng cosine bge-m3, hiệu chỉnh 20/11/2026 trên vault thật: query rác /
+# lạc đề cao nhất 0.566 ("giá vé máy bay" vs bài travel), query có thật
+# >= 0.67. Dưới SEM_LOW coi như không có.
+SEM_STRONG = 0.60
+SEM_LOW = 0.52
+
+
+def find_note_for_source(path: str, vault_root: str | None = None) -> str | None:
+    """Vault note already OCR'd from `path` (match frontmatter source_path,
+    else source == basename). None if the source changed after the note."""
+    vault = os.path.abspath(os.path.expanduser(vault_root or VAULT_DEFAULT))
+    path = os.path.abspath(os.path.expanduser(path))
+    base = os.path.basename(path)
+    by_path = by_name = None
+    for fp in _vault_dirs(vault):
+        meta = _note_meta(fp)
+        if meta.get("source_path") == path:
+            by_path = fp
+            break
+        if by_name is None and meta.get("source") == base:
+            by_name = fp
+    hit = by_path or by_name
+    if hit and os.path.isfile(path) and os.path.getmtime(path) > os.path.getmtime(hit):
+        return None  # file gốc mới hơn note -> note có thể đã cũ
+    return hit
+
+
+def _note_meta(fp: str) -> dict:
+    """Frontmatter key/values of a note (source, ocr_date, ...)."""
+    try:
+        with open(fp, encoding="utf-8", errors="replace") as f:
+            head = f.read(1500)
+    except OSError:
+        return {}
+    m = _FRONTMATTER_RE.match(head)
+    meta = {}
+    if m:
+        for line in m.group(0).splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip().strip('"\'')
+    return meta
+
+
+_PAGE_HDR_RE = re.compile(r"^## Trang (\d+)\s*$", re.M)
+
+
+def list_notes(vault_root: str | None = None) -> str:
+    """Catalog of every document in the Vault (newest first)."""
+    vault = os.path.abspath(os.path.expanduser(vault_root or VAULT_DEFAULT))
+    rows = []
+    for fp in _vault_dirs(vault):
+        meta = _note_meta(fp)
+        txt = _read_note(fp)
+        pages = [int(x) for x in _PAGE_HDR_RE.findall(txt)]
+        rows.append({
+            "file": os.path.basename(fp),
+            "folder": os.path.basename(os.path.dirname(fp)),
+            "source": meta.get("source", ""),
+            "pages": max(pages) if pages else None,
+            "chars": len(txt),
+            "ingested": meta.get("ocr_date", ""),
+            "_mtime": os.path.getmtime(fp)})
+    rows.sort(key=lambda r: -r.pop("_mtime"))
+    return json.dumps({"documents": len(rows), "notes": rows,
+                       "hint": "Use search_notes to find content, read_note "
+                               "(file + page range) to read it in full."},
+                      ensure_ascii=False, indent=1)
+
+
+def _resolve_note(name: str, vault: str) -> str:
+    """Note path inside the vault from a full path, file name or part of it.
+    Never reads outside the vault."""
+    notes = list(_vault_dirs(vault))
+    want = os.path.abspath(os.path.expanduser(name.strip()))
+    if want in notes:
+        return want
+    base = os.path.basename(name.strip())
+    exact = [fp for fp in notes if os.path.basename(fp) == base
+             or os.path.basename(fp) == base + ".md"
+             or os.path.splitext(os.path.basename(fp))[0] + ".pdf" == base]
+    if len(exact) == 1:
+        return exact[0]
+    key = os.path.splitext(base)[0].lower()
+    part = [fp for fp in notes if key and key in os.path.basename(fp).lower()]
+    if len(part) == 1:
+        return part[0]
+    cands = [os.path.basename(fp) for fp in (exact or part)][:10]
+    if cands:
+        raise ValueError(f"'{name}' matches several notes: {cands} - "
+                         "pass the exact file name.")
+    raise FileNotFoundError(f"No vault note named '{name}'. Call list_notes "
+                            "to see the available documents.")
+
+
+READ_NOTE_MAX = 12_000
+
+
+def read_note(file: str, first_page: int = 1, last_page: int | None = None,
+              vault_root: str | None = None) -> str:
+    """Full text of pages first_page..last_page of a vault note (no OCR).
+    Notes without page markers are read in chunks of READ_NOTE_MAX chars
+    (first_page = chunk number)."""
+    vault = os.path.abspath(os.path.expanduser(vault_root or VAULT_DEFAULT))
+    fp = _resolve_note(file, vault)
+    txt = _read_note(fp)
+    marks = list(_PAGE_HDR_RE.finditer(txt))
+    first = max(1, int(first_page or 1))
+    if marks:
+        total = int(marks[-1].group(1))
+        last = min(int(last_page or first), total)
+        parts = []
+        for k, mm in enumerate(marks):
+            pno = int(mm.group(1))
+            if first <= pno <= last:
+                end = marks[k + 1].start() if k + 1 < len(marks) else len(txt)
+                body = txt[mm.end():end].strip().rstrip("-").strip()
+                parts.append(f"## Trang {pno}\n{body}")
+        out = "\n\n".join(parts)
+        unit = "page"
+    else:
+        total = max(1, -(-len(txt) // READ_NOTE_MAX))
+        last = min(int(last_page or first), total)
+        out = txt[(first - 1) * READ_NOTE_MAX:last * READ_NOTE_MAX]
+        unit = "chunk"
+    if first > total:
+        return json.dumps({"file": os.path.basename(fp), "error":
+                           f"{unit} {first} out of range (1-{total})"},
+                          ensure_ascii=False)
+    truncated = len(out) > READ_NOTE_MAX
+    res = {"file": os.path.basename(fp), "source": _note_meta(fp).get("source", ""),
+           f"{unit}s": f"{first}-{last} of {total}",
+           "text": out[:READ_NOTE_MAX]}
+    if truncated:
+        res["note"] = (f"Output cut at {READ_NOTE_MAX} chars - read fewer "
+                       f"{unit}s at a time.")
+    return json.dumps(res, ensure_ascii=False, indent=1)
+
+
 def search_notes(query: str, vault_root: str | None = None,
-                 max_hits: int = 15) -> str:
+                 max_hits: int = 6, only_file: str | None = None,
+                 pages: tuple[int, int] | None = None) -> str:
     """Search across Vault .md notes (Inbox/ + Notes/, skip Attachments).
       1) EXACT PHRASE: whole query as substring - try first, return if hit.
       2) SEMANTIC (bge-m3) + KEYWORDS RANK (per page, stopwords removed).
-         Strong semantic (>=0.50) wins; weak semantic (>=0.45) wins only
+         Strong semantic (>=SEM_STRONG) wins; weak (>=SEM_LOW) wins only
          when keyword overlap < 50%; otherwise keyword pages are returned.
          Embed server is always waited for (prewarmed at MCP startup).
+    only_file / pages: restrict to one note and a page range (search_pdf).
     Returns mode, file, page, excerpt per hit (+ semantic_error on failure).
     """
     import re as _re
@@ -455,6 +596,14 @@ def search_notes(query: str, vault_root: str | None = None,
     q = query.strip().lower()
     if not q:
         return "Empty query."
+
+    def _in_range(pg) -> bool:
+        if not pages:
+            return True
+        try:
+            return pages[0] <= int(pg) <= pages[1]
+        except (TypeError, ValueError):
+            return False
 
     # ---------- mode 1: exact phrase ----------
     hits = []
@@ -466,6 +615,8 @@ def search_notes(query: str, vault_root: str | None = None,
             if not name.lower().endswith(".md"):
                 continue
             fp = os.path.join(d, name)
+            if only_file and fp != only_file:
+                continue
             txt = _read_note(fp)
             low = txt.lower()
             idx = low.find(q)
@@ -474,8 +625,9 @@ def search_notes(query: str, vault_root: str | None = None,
                 m = list(_re.finditer(r"^## Trang (\d+)\s*$", txt[:idx], _re.M))
                 if m:
                     page = m[-1].group(1)
-                para = _paragraph_around(txt, idx)
-                hits.append({"file": fp, "page": page, "excerpt": para})
+                if _in_range(page):
+                    para = _paragraph_around(txt, idx, 700)
+                    hits.append({"file": fp, "page": page, "excerpt": para})
                 idx = low.find(q, idx + len(q))
     if hits:
         return json.dumps({"query": query, "mode": "exact-phrase",
@@ -499,6 +651,8 @@ def search_notes(query: str, vault_root: str | None = None,
             if not name.lower().endswith(".md"):
                 continue
             fp = os.path.join(d, name)
+            if only_file and fp != only_file:
+                continue
             txt = _read_note(fp)
             marks = list(_PAGE_RE.finditer(txt))
             if marks:
@@ -513,8 +667,13 @@ def search_notes(query: str, vault_root: str | None = None,
                 if not seg.strip():
                     continue
                 words_present = [w for w in words if w in seg]
-                if len(words_present) < 2 and len(words) >= 3:
-                    continue  # đòi hỏi ít nhất 2 từ khoá trùng ở chế độ broad
+                # Phải khớp >= 60% số từ khoá (tối thiểu 1). Âm tiết tiếng Việt
+                # ngắn ("công", "giá") khớp substring khắp nơi, nên trùng 1-2
+                # từ gần như không mang thông tin.
+                if len(words_present) < max(1, -(-len(words) * 3 // 5)):
+                    continue
+                if not _in_range(pno):
+                    continue
                 total = sum(seg.count(w) for w in words_present)
                 scored.append((len(words_present), total, fp, pno, a, txt[a:b],
                                 words_present))
@@ -531,7 +690,10 @@ def search_notes(query: str, vault_root: str | None = None,
     _sem, _sem_err = None, None
     try:
         _sem = _semantic_search_notes(query, vault,
-                                      top_k=max(1, min(max_hits, 6)))
+                                      top_k=max(1, min(max_hits, 6)),
+                                      thresh=SEM_LOW, only_file=only_file)
+        if _sem and pages:
+            _sem = [r for r in _sem if _in_range(r.get("page"))] or None
     except Exception as e:  # embed server lỗi / timeout / thiếu model
         _sem_err = f"{type(e).__name__}: {e}"
         print(f"[search_notes] semantic search failed: {_sem_err}",
@@ -544,14 +706,14 @@ def search_notes(query: str, vault_root: str | None = None,
             payload["semantic_error"] = _sem_err
         return json.dumps(payload, ensure_ascii=False, indent=1)
 
-    if _top >= 0.50:
+    if _top >= SEM_STRONG:
         return _out({"mode": "semantic",
                      "note": ("SEMANTIC results, cross-language, ranked by "
                               "meaning (best first). Each result gives file, "
                               "page and score."),
                      "matches": len(_sem), "results": _sem})
     # Semantic yếu: chỉ ưu tiên khi keyword cũng yếu (< nửa số từ khoá).
-    if _top >= 0.45 and _kw_ratio < 0.5:
+    if _top >= SEM_LOW and _kw_ratio < 0.5:
         return _out({"mode": "semantic-low",
                      "note": ("LOW-CONFIDENCE semantic matches (scores are "
                               "modest; the content may only be loosely "
@@ -562,12 +724,12 @@ def search_notes(query: str, vault_root: str | None = None,
                      "matches": len(_sem), "results": _sem})
 
     results = []
-    for distinct, total, fp, pno, a, seg, wp in scored[:max(3, max_hits)]:
+    for distinct, total, fp, pno, a, seg, wp in scored[:max(1, max_hits)]:
         paragraphs = [p.strip() for p in seg.split("\n\n") if p.strip()]
-        best_paras = [p for p in paragraphs
-                      if any(w in p.lower() for w in wp)][:3]
+        best_paras = [p[:500] for p in paragraphs
+                      if any(w in p.lower() for w in wp)][:2]
         if not best_paras:
-            best_paras = [" ".join(seg.split())[:600]]
+            best_paras = [" ".join(seg.split())[:500]]
         results.append({"file": fp, "page": pno,
                         "matched_keywords": wp,
                         "keyword_score": f"{distinct}/{len(words)} words",
@@ -587,10 +749,10 @@ def search_notes(query: str, vault_root: str | None = None,
                 "(see semantic_error) - absence is NOT confirmed.")
     elif not words:
         hint = ("No usable keywords in query and semantic search found "
-                "nothing above threshold 0.45.")
+                "nothing above threshold.")
     else:
         hint = ("Not found by phrase, keywords or semantic search "
-                "(threshold 0.45). The content is very likely absent "
+                "(above threshold). The content is very likely absent "
                 "from the vault notes.")
     return _out({"mode": "keywords+semantic", "matches": 0, "results": [],
                  "hint": hint})
@@ -738,6 +900,10 @@ def _vault_page_vectors(vault: str) -> dict[int, list]:
             cache[fp] = {"mtime": mtime,
                          "pages": [{"p": p, "t": t, "v": [round(x, 4) for x in v]}
                                    for (p, t), v in zip(segs, vectors)]}
+    # note đã xoá/di chuyển -> bỏ vector cũ, kẻo search_notes trả kết quả
+    # từ tài liệu không còn tồn tại
+    for fp in [k for k in cache if not os.path.isfile(k)]:
+        del cache[fp]
     tmp = cache_fp + ".tmp"
     _json.dump(cache, open(tmp, "w"))
     os.replace(tmp, cache_fp)
@@ -768,8 +934,9 @@ def _windows(text: str, max_chars: int = 800) -> list[str]:
 
 
 def _semantic_search_notes(query: str, vault: str,
-                           top_k: int = 6, thresh: float = 0.45,
-                           wait_for_server: bool = True):
+                           top_k: int = 6, thresh: float = SEM_LOW,
+                           wait_for_server: bool = True,
+                           only_file: str | None = None):
     """Hai chang:
       1) rank TRANG bang embedding (cache);
       2) ZOOM-IN: voi top trang, embed tung cua so ~4 dong va tra ve cua so
@@ -781,6 +948,8 @@ def _semantic_search_notes(query: str, vault: str,
     cache = _vault_page_vectors(vault)
     pages = []
     for fp, ent in cache.items():
+        if only_file and fp != only_file:
+            continue
         for pg in ent.get("pages", []):
             score = _cosine(qv, pg["v"])
             pages.append((score, fp, pg.get("p", ""), pg.get("t", "")))
@@ -810,7 +979,7 @@ def _semantic_search_notes(query: str, vault: str,
             continue
         per_page[(fp, p)] = n_this_page + 1
         results.append({"file": fp, "page": p, "score": round(ws, 3),
-                        "excerpt": (" ".join(w.split()))[:1600]})
+                        "excerpt": (" ".join(w.split()))[:900]})
         if len(results) >= top_k:
             break
     return results or None

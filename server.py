@@ -60,33 +60,35 @@ DEFAULT_LANGS = os.environ.get("PDF_OCR_LANGS", "vi-VN,en-US")
 MCP = FastMCP(
     "vision-docs",
     instructions=(
-        "Read PDF/DOCX/MD/TXT/images locally on the Mac using Apple's Vision OCR. "
-        "TWO SOURCES OF VAULT CONTENT - pick deliberately: (a) Jan project "
-        "RAG: chunks Jan already injects into the conversation (Vault notes "
-        "are auto-synced into the project) - fine for general Q&A and "
-        "summaries; (b) search_notes: call it whenever you must QUOTE, give "
-        "a PAGE NUMBER, check an exact figure/name, when RAG context is "
-        "empty or looks unrelated, or before saying something is not in the "
-        "documents. RAG chunks carry no page numbers - never invent one; "
-        "get it from search_notes. "
-        "CRITICAL RULE - NEVER INVENT A FILENAME: only search files that the "
-        "user actually mentioned, that exist in the conversation, or that are "
-        "in ~/Documents/Vault (Inbox/ or Notes/). If the user's question does "
-        "not name a file, do NOT guess one - the answer is usually in the "
-        "Vault notes: call search_notes with keywords, or ask the user WHICH "
-        "document. USAGE: (1) attachments in chat are NOT files on disk - "
-        "pass the name and the server will locate it; (2) to FIND WHERE "
-        "content appears in a document use search_notes (instant, searches "
-        "all Vault notes) or search_pdf with keywords IN THE DOCUMENT'S "
-        "LANGUAGE (English docs need English keywords - translate the user's "
-        "Vietnamese query first); (3) PDFs over 25 pages: ocr_pdf writes a "
-        "full .md and returns a preview - read that file, do not re-OCR; (4) "
-        "to add a new document to the vault use ingest_document or "
-        "batch_ingest; (5) call pdf_info before OCR-ing a PDF."
+        "Local, offline document research over the user's Vault (documents "
+        "OCR'd on this Mac). RESEARCH WORKFLOW: (1) list_notes - see which "
+        "documents exist (never guess a file name); (2) search_notes - find "
+        "WHERE something is said; ask in any language, it matches by meaning "
+        "across Vietnamese/English; (3) read_note - read the full page(s) "
+        "around a hit before answering or summarising; (4) answer with the "
+        "document name and PAGE NUMBER taken from the tool results. "
+        "Jan project RAG chunks may also appear in the conversation: fine "
+        "for general context, but they carry no page numbers - never invent "
+        "one; confirm with search_notes before quoting, and before saying "
+        "something is NOT in the documents. "
+        "search_pdf: only for one PDF file the user named (uses its Vault "
+        "note when ingested). ingest_document: add a new file (pdf/docx/md/"
+        "image) to the Vault. Chat attachments are not files on disk - pass "
+        "the file name and the server locates it."
     ),
 )
 
 MAX_INLINE_TEXT_CHARS = 30_000  # qua day se cat va ghi ban day du ra file .md
+
+# Model nhỏ (Jan 4B) chọn tool kém khi có nhiều tool -> mặc định chỉ đăng ký
+# bộ research gọn (list_notes, search_notes, read_note, search_pdf,
+# ingest_document). VISION_DOCS_ALL_TOOLS=1 bật lại các tool OCR/ảnh phụ
+# (hữu ích cho model vision / người dùng nâng cao).
+ALL_TOOLS = os.environ.get("VISION_DOCS_ALL_TOOLS", "").lower() in ("1", "true", "yes")
+
+
+def _extra_tool(fn):
+    return MCP.tool()(fn) if ALL_TOOLS else fn
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +112,13 @@ def _load_pdf(path: str):
     doc = CGPDFDocumentCreateWithURL(NSURL.fileURLWithPath_(path))
     if doc is None:
         raise ValueError(f"Cannot open PDF (corrupt or password-protected?): {path}")
+    import Quartz as _Q
+    if _Q.CGPDFDocumentIsEncrypted(doc) and not _Q.CGPDFDocumentIsUnlocked(doc) \
+            and not _Q.CGPDFDocumentUnlockWithPassword(doc, b""):
+        raise ValueError(
+            f"PDF is password-protected: {os.path.basename(path)}. Ask the "
+            "user to open it in Preview, enter the password and Export as PDF "
+            "(without password), then use the new file.")
     n = CGPDFDocumentGetNumberOfPages(doc)
     if n == 0:
         raise ValueError(f"Empty PDF: {path}")
@@ -196,14 +205,17 @@ def _write_cgimage(cgimage, file_path: str, jpeg_quality: float = 0.8) -> str:
 
 def _has_text_layer(path: str, max_pages: int = 30) -> dict[int, bool]:
     """Trang nao co text layer that (copy duoc)? - sample toi da max_pages trang."""
-    reader = pypdf.PdfReader(path)
-    if reader.is_encrypted:
-        try:
-            reader.decrypt("")
-        except Exception:
+    # pypdf chỉ để đoán text layer — lỗi ở đây (PDF mã hoá, hỏng) không được
+    # làm hỏng cả tool; Quartz vẫn render/OCR được nhiều PDF mà pypdf chịu.
+    try:
+        reader = pypdf.PdfReader(path)
+        if reader.is_encrypted and not reader.decrypt(""):
             return {}
+        pages = reader.pages[:max_pages]
+    except Exception:
+        return {}
     has: dict[int, bool] = {}
-    for i, page in enumerate(reader.pages[:max_pages], start=1):
+    for i, page in enumerate(pages, start=1):
         try:
             txt = (page.extract_text() or "").strip()
         except Exception:
@@ -224,7 +236,7 @@ def _norm_range(first: int, last: int | None, n: int) -> tuple[int, int]:
 # MCP Tools
 # ---------------------------------------------------------------------------
 
-@MCP.tool()
+@_extra_tool
 def pdf_info(path: str) -> str:
     """PDF overview: page count, sizes, which pages have a text layer
     (copyable) vs scanned/image pages (need OCR). Call this before OCR.
@@ -253,16 +265,14 @@ def pdf_info(path: str) -> str:
     return json.dumps(summary, ensure_ascii=False, indent=1)
 
 
-@MCP.tool()
+@_extra_tool
 def ocr_pdf(
     path: str,
     first_page: int = 1,
     last_page: int | None = None,
-    dpi: float = 200.0,
     languages: str = DEFAULT_LANGS,
     output_md_path: str | None = None,
     include_images: bool = False,
-    max_images: int = 5,
 ) -> Any:
     """OCR a PDF with the Mac's local AI OCR (Apple Vision); works on scanned
     pages too.
@@ -274,8 +284,13 @@ def ocr_pdf(
       to a .md file and returns a 2-page preview + the file path. Read or grep
       that file for follow-up - do NOT call ocr_pdf again.
     - Only OCR small ranges (e.g. 10-30 pages) when you need the text inline.
-    Set include_images=true only for vision-capable models (keep max_images small).
+    - If the PDF is already in the Vault, use search_notes / search_pdf
+      instead of re-OCR-ing it.
+    `languages`: keep the default unless the document is not Vietnamese or
+    English (e.g. "zh-Hans" for Chinese). include_images=true only for
+    vision-capable models (max 5 page images).
     """
+    dpi, max_images = 200.0, 5
     doc, n, resolved = _load_pdf(path)
     first, last = _norm_range(first_page, last_page, n)
     langs = [s.strip() for s in languages.split(",") if s.strip()] or DEFAULT_LANGS.split(",")
@@ -351,65 +366,73 @@ def search_pdf(
     query: str,
     first_page: int = 1,
     last_page: int | None = None,
-    dpi: float = 200.0,
-    languages: str = DEFAULT_LANGS,
-    context_chars: int = 260,
 ) -> str:
-    """OCR locally (Vision) then find `query` in ONE PDF FILE THE USER NAMED -
-    returns PAGE + surrounding text. Far cheaper than ocr_pdf.
-    If the user did not name a PDF file, do NOT use this tool - call
-    search_notes (searches every ingested document). If `path` cannot be
-    found, this tool automatically falls back to search_notes.
-    NOTE: query must be a keyword in the DOCUMENT'S language (an English PDF
-    needs English keywords such as hunt/trade/pilgrim/migration - not a
-    Vietnamese translation). Call once per keyword."""
+    """Find where `query` appears in ONE PDF FILE THE USER NAMED - returns
+    PAGE + surrounding text. If the PDF was already ingested into the Vault
+    its OCR note is searched instantly (semantic, cross-language - a
+    Vietnamese sentence finds English text); otherwise the PDF is OCR'd now
+    (~0.5 s/page) and searched for the literal text.
+    If the user did not name a PDF file, use search_notes instead. If `path`
+    cannot be found, this tool automatically searches all Vault notes."""
     try:
         doc, n, resolved = _load_pdf(path)
     except FileNotFoundError:
         # Model nhỏ hay bịa tên file ("document.pdf") — thay vì trả lỗi khiến
         # nó đi lạc, tìm luôn trong các note Vault đã OCR.
-        res = json.loads(server_extra.search_notes(query, None, 15))
+        res = json.loads(server_extra.search_notes(query))
         res["note"] = (f"File {path!r} does not exist - searched the Vault "
                        "notes instead (search_notes). " + res.get("note", ""))
         return json.dumps(res, ensure_ascii=False, indent=1)
     first, last = _norm_range(first_page, last_page, n)
-    langs = [s.strip() for s in languages.split(",") if s.strip()] or DEFAULT_LANGS.split(",")
     q = query.strip().lower()
     if not q:
         return "Empty query."
 
+    # Đã có note OCR của file này trong Vault -> tìm trong note, khỏi OCR lại
+    # (IELTS 178 trang: ~97 s mỗi lần gọi -> ~0 s).
+    note = server_extra.find_note_for_source(resolved)
+    if note:
+        rng = None if (first, last) == (1, n) else (first, last)
+        res = json.loads(server_extra.search_notes(query, None, 6,
+                                                   only_file=note, pages=rng))
+        res["note"] = (f"Searched the existing OCR note of this PDF ({n} pages, "
+                       "no re-OCR). " + res.get("note", ""))
+        return json.dumps(res, ensure_ascii=False, indent=1)
+
+    langs = DEFAULT_LANGS.split(",")
     hits: list[dict[str, Any]] = []
     for p in range(first, last + 1):
-        img, _ = _render_page_to_cgimage(doc, p, dpi)
+        img, _ = _render_page_to_cgimage(doc, p, 200.0)
         text = _vision_ocr(img, langs)
         if not text:
             continue
         flat = " ".join(text.split())
         idx = flat.lower().find(q)
-        while idx != -1 and len(hits) < 40:
-            start = max(0, idx - context_chars // 2)
-            hits.append({"page": p, "excerpt": flat[start: idx + context_chars]})
+        while idx != -1 and len(hits) < 10:
+            start = max(0, idx - 150)
+            hits.append({"page": p, "excerpt": flat[start: idx + len(q) + 250]})
             idx = flat.lower().find(q, idx + len(q))
     if not hits:
         return (f"No exact match for '{query}' in pages {first}-{last}/{n} "
-                "of this PDF (search_pdf only matches the literal text). For a "
-                "paraphrase, a full sentence or a question in another "
-                "language, call search_notes (semantic, cross-language).")
+                "of this PDF (not yet ingested, so only the literal text is "
+                "matched). Retry with a short keyword in the document's "
+                "language, or ingest_document the PDF first and then use "
+                "search_notes for meaning-based / cross-language search.")
     return json.dumps({"query": query, "matches": len(hits), "results": hits},
                       ensure_ascii=False, indent=1)
 
 
-@MCP.tool()
+@_extra_tool
 def export_page_images(
     path: str,
     output_dir: str,
     first_page: int = 1,
     last_page: int | None = None,
-    dpi: float = 150.0,
     image_format: str = "jpeg",
 ) -> str:
     """Export PDF pages as JPG/PNG images - e.g. to drag into the Jan chat for a
-    vision model. Returns the list of files written."""
+    vision model. image_format: "jpeg" or "png". Returns the files written."""
+    dpi = 150.0
     doc, n, resolved = _load_pdf(path)
     first, last = _norm_range(first_page, last_page, n)
     out_dir = os.path.abspath(os.path.expanduser(output_dir))
@@ -477,7 +500,7 @@ if _mod is None:  # khi duoc import nhu module thuong
 server_extra.S = _mod
 
 
-@MCP.tool()
+@_extra_tool
 def ocr_image(path: str, languages: str = DEFAULT_LANGS) -> str:
     """OCR a single image file (png/jpg/heic/webp/tiff/bmp) with the Mac's local
     AI OCR. Returns the recognized text."""
@@ -485,7 +508,7 @@ def ocr_image(path: str, languages: str = DEFAULT_LANGS) -> str:
     return server_extra.ocr_image_file(path, langs) or "*(khong nhan dien duoc chu)*"
 
 
-@MCP.tool()
+@_extra_tool
 def ocr_docx(path: str, languages: str = DEFAULT_LANGS, copy_images: bool = True) -> str:
     """Read a Word .docx: text + tables + OCR of every embedded image ->
     markdown. With copy_images=true the images are saved into
@@ -499,31 +522,50 @@ def ocr_docx(path: str, languages: str = DEFAULT_LANGS, copy_images: bool = True
 
 
 @MCP.tool()
-def ingest_document(path: str, vault_root: str = server_extra.VAULT_DEFAULT,
-                    dest: str = "Inbox", languages: str = DEFAULT_LANGS,
-                    dpi: float = 200.0, copy_images: bool = True) -> str:
+def ingest_document(path: str, dest: str = "Inbox",
+                    languages: str = DEFAULT_LANGS) -> str:
     """Pipeline: take any file (.pdf | .docx | .md | image) -> local OCR ->
     write a .md note into the Vault (default ~/Documents/Vault/Inbox); images
     are copied to Vault/Attachments/<file-name>/. The note gets frontmatter
-    (source, OCR date) for provenance. Returns a JSON summary."""
-    return server_extra.ingest_document(path, vault_root, dest, languages, dpi,
-                                        copy_images)
+    (source, OCR date) for provenance. dest: "Inbox" (default) or "Notes".
+    Returns a JSON summary."""
+    return server_extra.ingest_document(path, None, dest, languages, 200.0,
+                                        True)
 
 
-@MCP.tool()
-def batch_ingest(folder: str, vault_root: str = server_extra.VAULT_DEFAULT,
-                 dest: str = "Inbox", languages: str = DEFAULT_LANGS,
-                 dpi: float = 200.0, skip_existing: bool = True) -> str:
+@_extra_tool
+def batch_ingest(folder: str, dest: str = "Inbox",
+                 languages: str = DEFAULT_LANGS,
+                 skip_existing: bool = True) -> str:
     """Ingest a whole FOLDER at once: every supported file (.pdf .docx .md /
     images) is OCR'd and written as a .md note into the Vault. Files whose note
     already exists (and is newer) are skipped when skip_existing=true. Use this
     to prepare a batch of documents for RAG indexing in one shot."""
-    return server_extra.batch_ingest(folder, vault_root, dest, languages, dpi,
+    return server_extra.batch_ingest(folder, None, dest, languages, 200.0,
                                      skip_existing)
 
 
 @MCP.tool()
-def search_notes(query: str, max_hits: int = 15) -> str:
+def list_notes() -> str:
+    """List every document already in the Vault (file name, source file,
+    page count, date ingested). Call this when the user asks what documents
+    exist, or refers to a document by a vague name - then use the exact
+    `file` value with read_note / search_notes."""
+    return server_extra.list_notes()
+
+
+@MCP.tool()
+def read_note(file: str, first_page: int = 1, last_page: int | None = None) -> str:
+    """Read the FULL text of pages first_page..last_page of one Vault
+    document (instant, no OCR). Use it after search_notes to read the whole
+    page around a hit (e.g. page-1..page+1), or to summarise a section.
+    `file` = the file name from list_notes or a search result (a source
+    name like "report.pdf" also works). Read at most ~5 pages per call."""
+    return server_extra.read_note(file, first_page, last_page)
+
+
+@MCP.tool()
+def search_notes(query: str, max_hits: int = 6) -> str:
     """Search the Vault's already-OCR'd notes (.md in Inbox/ and Notes/) -
     instant, zero OCR cost. Use this first when the user refers to a document
     that was ingested into the Vault or uploaded to a Project. Accepts FULL
@@ -545,8 +587,7 @@ def search_notes(query: str, max_hits: int = 15) -> str:
     Excerpts are COMPLETE paragraphs - quote verbatim ONLY from the excerpt
     text; never complete a truncated sentence from imagination. If you need
     more surrounding text, call again with a phrase copied from the excerpt.
-    For Vietnamese queries over English documents, include or translate to
-    the document's language keywords (e.g. travel, trade, war, migration)."""
+    Ask in any language - do NOT translate the question yourself."""
     return server_extra.search_notes(query, None, max_hits)
 
 
