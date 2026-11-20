@@ -329,3 +329,15 @@ vi/en nếu muốn nhanh).
   PingFang sạch: OCR đúng 100% ký tự.
 - Tìm kiếm sau đó vẫn chạy cross-language vì bge-m3 đa ngữ (tier-2 keyword
   yếu với từ 1-2 ký tự Hán, tier semantic & exact-phrase là chính).
+
+## 📂 Nhiều project: multi-select + custom dropdown
+
+Nhấp chữ **"Chọn project…"** (đã thay `<select>` native — popup macOS xanh
+đỏTheme mắt) mở popover dark: mỗi project một hàng (tên · số file · số
+chunks) với checkbox, **chọn nhiều đích sync cùng lúc**. Lưu ý:
+
+- Badge mỗi note: `✓ Jan` (đủ mọi project đang chọn) · `◐ 1/2` (một phần)
+  · `→ Jan` (chưa có ở đâu) — bấm là sync vào tất cả project đã chọn.
+- "Đồng bộ tất cả" và auto-sync sau OCR áp dụng cho mọi project được chọn.
+- `/jan-sync` nhận `projects: [id...]`; id không hợp lệ bị bỏ qua.
+- Lựa chọn lưu `localStorage` (`vd.projs`, migrate tự động từ `vd.proj` cũ).

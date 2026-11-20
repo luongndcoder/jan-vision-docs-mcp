@@ -215,34 +215,48 @@ def projects():
 
 
 @app.get("/jan-state")
-def jan_state(project: str = ""):
-    if not project:
-        return {}
-    db = _proj_db(project)
-    if not db:
-        return {"error": "không thấy project"}
-    return {"project": project,
-            "state": jan_sync.project_state(db, _vault_note_paths())}
+def jan_state(projects: str = ""):
+    """state cho NHIỀU project: projects=id1,id2 -> {pid: {path: {...}}}"""
+    projs = {p["id"]: p for p in jan_sync.list_projects()}
+    out = {}
+    for pid in [p for p in projects.split(",") if p]:
+        if pid in projs:
+            out[pid] = jan_sync.project_state(projs[pid]["db"],
+                                              _vault_note_paths())
+    return {"projects": out}
 
 
 @app.post("/jan-sync")
 def jan_sync_ep(body: dict):
+    """Sync notes (hoặc cả vault) vào MỘT HAY NHIỀU project."""
     names = body.get("notes") or []
-    project_id = body.get("project") or ""
-    db = _proj_db(project_id)
-    if not db:
-        return {"error": "không thấy project — tạo project trong Jan trước"}
-    if not names:  # all vault notes
-        return jan_sync.sync_all(db, VAULT)
-    out = []
-    for name in names:
-        try:
-            fp = _note_path(name)
-        except HTTPException:
-            out.append({"note": name, "ok": False, "error": "không có note"})
+    pids = body.get("projects") or []
+    if isinstance(pids, str):
+        pids = [p for p in pids.split(",") if p]
+    if body.get("project"):
+        pids.append(body["project"])
+    projs = {p["id"]: p for p in jan_sync.list_projects()}
+    pids = [p for p in dict.fromkeys(pids) if p in projs]
+    if not pids:
+        return {"error": "chưa chọn project hợp lệ nào"}
+    per = {}
+    for pid in pids:
+        db = projs[pid]["db"]
+        if not names:  # all vault notes
+            r = jan_sync.sync_all(db, VAULT)
+            per[pid] = {"name": projs[pid]["name"], "summary": r}
             continue
-        out.append({"note": name, **jan_sync.sync_note(db, fp)})
-    return {"results": out}
+        results = []
+        for name in names:
+            try:
+                fp = _note_path(name)
+            except HTTPException:
+                results.append({"note": name, "ok": False,
+                                "error": "không có note"})
+                continue
+            results.append({"note": name, **jan_sync.sync_note(db, fp)})
+        per[pid] = {"name": projs[pid]["name"], "results": results}
+    return {"projects": per}
 
 
 _FAVICON = ("data:image/svg+xml," +
@@ -439,6 +453,35 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   transition:transform .3s cubic-bezier(.2,.8,.25,1);box-shadow:var(--shadow)}
 .toast.on{transform:translate(-50%,0)}
 
+/* ---------- custom project dropdown ---------- */
+.projdd{position:relative}
+.projbtn{display:inline-flex;align-items:center;gap:9px;
+ font:500 13px var(--sans);color:var(--text);cursor:pointer;background:var(--panel2);
+ border:1px solid var(--line);padding:7px 12px;border-radius:9px;
+ transition:border-color .18s,transform .1s}
+.projbtn:hover{border-color:#333b46}
+.projbtn:active{transform:translateY(1px)}
+.projbtn svg{opacity:.55;transition:transform .2s}
+.projdd.open .projbtn svg{transform:rotate(180deg)}
+.projdd.open .projbtn{border-color:var(--accent-dim)}
+.projpop{position:absolute;top:calc(100% + 6px);left:0;min-width:270px;z-index:12;
+ background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+ padding:6px;box-shadow:0 24px 60px -18px #000000e6,0 1px 0 #ffffff08 inset;
+ opacity:0;transform:translateY(-6px);pointer-events:none;
+ transition:opacity .16s,transform .16s}
+.projdd.open .projpop{opacity:1;transform:none;pointer-events:auto}
+.prow{display:flex;align-items:center;gap:10px;padding:8px 9px;border-radius:8px;
+ cursor:pointer;color:var(--muted);transition:background .13s,color .13s}
+.prow:hover{background:#ffffff07;color:var(--text)}
+.pchk{width:17px;height:17px;border-radius:5px;border:1px solid var(--line);
+ display:grid;place-items:center;font-size:11px;flex:none;color:transparent;
+ transition:background .14s,border-color .14s,color .14s}
+.prow.on .pchk{background:var(--accent-dim);border-color:var(--accent);color:#fff}
+.prow.on .pname{color:var(--text)}
+.pname{font-weight:500;font-size:13.5px}
+.pmeta{margin-left:auto;font:400 10.5px var(--mono);color:var(--faint)}
+.pempty{padding:11px 12px;color:var(--faint);font-size:13px}
+
 /* ---------- lang chips ---------- */
 .langbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:12px}
 .langbar .ll{font-size:12.5px;color:var(--muted);margin-right:2px}
@@ -562,7 +605,14 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
     </div>
     <div class="projbar" id="projwrap">
       <label>Jan project</label>
-      <select id="proj" aria-label="Chọn Jan project"></select>
+      <div class="projdd" id="projdd">
+        <button type="button" class="projbtn" id="projbtn" aria-haspopup="listbox">
+          <span id="projbtn-t">Chọn project…</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="projpop" id="projpop" role="listbox"></div>
+      </div>
       <button class="btn2" id="syncall">Đồng bộ tất cả</button>
       <span class="qstat" id="janinfo"></span>
     </div>
@@ -758,68 +808,108 @@ setInterval(()=>{lastJobs.forEach((j,id)=>{
  const t=document.getElementById('e_'+id);
  if(t&&j.started)t.textContent=((Date.now()/1000-j.started)|0)+'s';});},1000);
 
-/* ---------- Jan project sync ---------- */
-let projList=[],curProj=localStorage.getItem('vd.proj')||'',
-    janMap={},janByName={},janSig='Ø';
-function projName(){const p=projList.find(p=>p.id===curProj);return p?p.name:''}
+/* ---------- Jan project sync (multi-project) ---------- */
+let projList=[],selProjs=new Set(),janByProject={},janSig='\u00d8';
+function migrateProjStore(){
+ const old=localStorage.getItem('vd.proj');
+ if(old&&!localStorage.getItem('vd.projs'))
+  localStorage.setItem('vd.projs',JSON.stringify([old]));
+ try{selProjs=new Set(JSON.parse(localStorage.getItem('vd.projs')||'[]'))}
+ catch(e){selProjs=new Set()}}
+function showPop(v){$('#projdd').classList.toggle('open',v)}
+function projBtnText(){
+ const n=selProjs.size;
+ $('#projbtn-t').textContent=n===0?'Ch\u1ecdn project\u2026':
+  n===1?((projList.find(p=>selProjs.has(p.id))||{}).name||'\u2014')
+       :`${n} project`; }
+function renderProjPop(){
+ $('#projpop').innerHTML=projList.length?projList.map(p=>
+  `<div class="prow ${selProjs.has(p.id)?'on':''}" data-p="${p.id}"
+   role="option" aria-selected="${selProjs.has(p.id)}">
+   <span class="pchk">\u2713</span><span class="pname">${esc(p.name)}</span>
+   <span class="pmeta">${p.files} file \u00b7 ${p.chunks} chunks</span></div>`).join('')
+  :'<div class="pempty">Ch\u01b0a c\u00f3 project n\u00e0o trong Jan \u2014 t\u1ea1o project r\u1ed3i quay l\u1ea1i.</div>';
+ document.querySelectorAll('.prow').forEach(r=>r.onclick=e=>{
+  e.stopPropagation();
+  const id=r.dataset.p;
+  if(selProjs.has(id))selProjs.delete(id);else selProjs.add(id);
+  localStorage.setItem('vd.projs',JSON.stringify([...selProjs]));
+  r.classList.toggle('on',selProjs.has(id));
+  r.setAttribute('aria-selected',selProjs.has(id));
+  projBtnText();loadJan();});}
 async function loadProjects(){
  try{projList=await(await fjson('/projects')).json();}catch(e){projList=[]}
- if(!projList.length){$('#projwrap').style.display='none';janSig='';renderNotes(lastNotes);return;}
- $('#proj').innerHTML=projList.map(p=>
-  `<option value="${p.id}">${esc(p.name)} · ${p.files} file</option>`).join('');
- if(!projList.some(p=>p.id===curProj))curProj=projList[0].id;
- $('#proj').value=curProj;localStorage.setItem('vd.proj',curProj);
- loadJan();}
-$('#proj').onchange=e=>{curProj=e.target.value;
- localStorage.setItem('vd.proj',curProj);loadJan();};
+ if(!projList.length){$('#projwrap').style.display='none';renderNotes(lastNotes);return;}
+ const ids=new Set(projList.map(p=>p.id));
+ selProjs=new Set([...selProjs].filter(id=>ids.has(id)));
+ renderProjPop();projBtnText();loadJan();}
+$('#projbtn').onclick=e=>{e.stopPropagation();
+ showPop(!$('#projdd').classList.contains('open'))};
+document.addEventListener('click',e=>{
+ if(!e.target.closest('#projdd'))showPop(false)});
+function noteState(name){
+ let k=0;selProjs.forEach(id=>{
+  if(janByProject[id]&&janByProject[id][name]!==undefined)k++});
+ return {k,n:selProjs.size};}
 async function loadJan(force){
- if(!curProj){return;}
- try{const r=await(await fjson('/jan-state?project='+encodeURIComponent(curProj))).json();
-  janMap=r.state||{};}catch(e){janMap={}}
- janByName={};
- Object.keys(janMap).forEach(p=>{janByName[p.split('/').pop()]=janMap[p].chunk_count});
- const sig=JSON.stringify(janByName);
- const nIn=Object.keys(janByName).length;
- $('#janinfo').innerHTML=`<b>${nIn}</b>/${lastNotes.length||'…'} đã trong Jan`;
+ if(!projList.length)return;
+ janByProject={};
+ if(selProjs.size){
+  try{const r=await(await fjson('/jan-state?projects='+
+    encodeURIComponent([...selProjs].join(',')))).json();
+   const pp=r.projects||{};
+   Object.keys(pp).forEach(pid=>{
+    const m={};Object.keys(pp[pid]).forEach(p=>{
+     m[p.split('/').pop()]=pp[pid][p].chunk_count});
+    janByProject[pid]=m;});
+  }catch(e){}}
+ const owned=lastNotes.filter(n=>noteState(n.name).k>0).length;
+ $('#janinfo').innerHTML=`<b>${owned}</b>/${lastNotes.length||'\u2026'} \u0111\u00e3 trong Jan`+
+  (selProjs.size>1?` \u00b7 ${selProjs.size} project`:'');
+ const sig=JSON.stringify([janByProject,[...selProjs].sort(),lastNotes.map(n=>n.name)]);
  if(sig!==janSig||force){janSig=sig;renderNotes(lastNotes);}}
 async function syncOne(name,btn){
- if(!curProj){toast('Chọn Jan project trước đã.');return;}
- if(btn){btn.classList.add('busy');}
- let ok=false,msg='';
+ if(!selProjs.size){toast('Ch\u1ecdn Jan project tr\u01b0\u1edbc \u0111\u00e3.');return;}
+ if(btn)btn.classList.add('busy');
+ let tot=0,ok=0,names=[],err='';
  try{const r=await(await fjson('/jan-sync',{method:'POST',
    headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({notes:[name],project:curProj})})).json();
-  const res=(r.results||[])[0];
-  if(r.error){msg=r.error;}
-  else if(res&&!res.ok){msg=res.error||'lỗi';}
-  else{ok=true;msg=`${projName()} ← ${name} `+
-   (res.skipped?'(đã có từ trước)':`(${res.chunks} chunks)`);}}
- catch(e){msg='không kết nối được server';}
- if(btn){btn.classList.remove('busy');}
- toast(msg,ok);
+   body:JSON.stringify({notes:[name],projects:[...selProjs]})})).json();
+  if(r.error)err=r.error;
+  Object.values(r.projects||{}).forEach(pp=>{
+   const res=(pp.results||[])[0];
+   if(res&&res.ok){ok++;names.push(pp.name);tot+=res.skipped?0:res.chunks;}
+   else err=(res&&res.error)||err||'l\u1ed7i';});
+ }catch(e){err='kh\u00f4ng k\u1ebft n\u1ed1i \u0111\u01b0\u1ee3c server';}
+ if(btn)btn.classList.remove('busy');
+ if(ok)toast(`${names.join(', ')} \u2190 ${name}${tot?` (${tot} chunks)`:''}`,true);
+ else toast(err);
  loadJan(true);}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-jan]');
  if(b){e.preventDefault();syncOne(b.dataset.jan,b);}});
 $('#syncall').onclick=async()=>{
- if(!curProj)return;
- const btn=$('#syncall');btn.classList.add('busy');btn.textContent='Đang đồng bộ…';
+ if(!selProjs.size){toast('Ch\u1ecdn Jan project tr\u01b0\u1edbc \u0111\u00e3.');return;}
+ const btn=$('#syncall');btn.classList.add('busy');btn.textContent='\u0110ang \u0111\u1ed3ng b\u1ed9\u2026';
+ let parts=[],anyFail=false;
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({notes:[],project:curProj})})).json();
-  toast(`Đồng bộ ${projName()}: mới ${(r.synced||[]).length}, `+
-   `bỏ qua ${(r.skipped||[]).length}, lỗi ${(r.failed||[]).length}`,!(r.failed||[]).length);}
- catch(e){toast('Đồng bộ lỗi — server có chạy không?');}
- btn.classList.remove('busy');btn.textContent='Đồng bộ tất cả';
+  body:JSON.stringify({notes:[],projects:[...selProjs]})})).json();
+  if(r.error){toast(r.error);return;}
+  Object.values(r.projects||{}).forEach(pp=>{
+   const s=pp.summary||{};
+   parts.push(`${pp.name}: m\u1edbi ${(s.synced||[]).length}, b\u1ecf qua ${(s.skipped||[]).length}`);
+   if((s.failed||[]).length)anyFail=true;});
+  toast(parts.join(' \u00b7 '),!anyFail);
+ }catch(e){toast('\u0110\u1ed3ng b\u1ed9 l\u1ed7i \u2014 server c\u00f3 ch\u1ea1y kh\u00f4ng?');}
+ btn.classList.remove('busy');btn.textContent='\u0110\u1ed3ng b\u1ed9 t\u1ea5t c\u1ea3';
  loadJan(true);};
-async function autoJan(note){ /* gọi khi 1 job OCR xong */
- if(!curProj||!note)return;
+async function autoJan(note){
+ if(!selProjs.size||!note)return;
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({notes:[note],project:curProj})})).json();
-  const res=(r.results||[])[0];
-  if(res&&res.ok&&!res.skipped)
-   toast(`Tự động vào ${projName()}: ${note} (${res.chunks} chunks)`,true);
-  else if(res&&res.ok)toast(`${note} đã có trong ${projName()}`,true);
+  body:JSON.stringify({notes:[note],projects:[...selProjs]})})).json();
+  const names=Object.values(r.projects||{}).map(pp=>pp.name);
+  if(names.length)toast(`T\u1ef1 \u0111\u1ed9ng v\u00e0o ${names.join(', ')}: ${note}`,true);
   loadJan(true);}catch(e){}}
 
 /* ---------- notes / library ---------- */
@@ -841,20 +931,24 @@ async function loadNotes(){
  renderNotes(ns);}
 function renderNotes(ns){
  ns=ns.filter(n=>filterF==='all'||n.folder===filterF);
+ const ST=ns.map(n=>{const s=noteState(n.name);
+  return {...s,cls:s.n===0?'':'on',
+   txt:s.n===0?(selProjs.size?'\u2192 Jan':'Jan')
+    :(s.k===s.n?'\u2713 Jan':(s.k>0?`\u25d0 ${s.k}/${s.n}`:'\u2192 Jan'))};});
  if(!ns.length){$('#notes').innerHTML=`<div class="empty">
   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#8f99a5"
    stroke-width="1.5"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
   <div>${filterF==='all'?'Vault còn trống':'Chưa có note trong '+(filterF==='Inbox'?'Inbox':'Notes')}</div></div>`;return;}
- $('#notes').innerHTML=ns.map((n,i)=>`<div class="nrow" style="animation-delay:${Math.min(i,12)*30}ms">
+ $('#notes').innerHTML=ns.map((n,i)=>{const st=ST[i];return `<div class="nrow" style="animation-delay:${Math.min(i,12)*30}ms">
   <span class="ftag">${n.folder}</span>
   <span class="nname"><a data-note="${esc(n.name)}" title="Xem trước">${esc(n.name)}</a></span>
   <span class="ninfo">${n.mtime} · ${n.kb} KB</span>
   <span class="acts">
-   <a class="jb ${janByName[n.name]!==undefined?'on':''}" data-jan="${esc(n.name)}"
-     title="${janByName[n.name]!==undefined?'Đã index trong '+esc(projName()):'Đưa vào '+esc(projName())}">
-    ${janByName[n.name]!==undefined?'✓ Jan '+(janByName[n.name]>1?janByName[n.name]+'k':''):'→ Jan'}</a>
+   <a class="jb ${st.cls}" data-jan="${esc(n.name)}"
+     title="Đồng bộ vào ${selProjs.size} project đang chọn">
+    ${st.txt}</a>
    <a data-note="${esc(n.name)}">Xem</a>
-   <a href="/download/${encodeURIComponent(n.name)}">Tải .md</a></span></div>`).join('');}
+   <a href="/download/${encodeURIComponent(n.name)}">Tải .md</a></span></div>`}).join('');}
 
 /* ---------- preview panel ---------- */
 const panel=$('#panel'),scrim=$('#scrim');
@@ -873,7 +967,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
 function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  t.classList.toggle('ok',!!ok);t.classList.add('on');
  setTimeout(()=>t.classList.remove('on'),3200);}
-restoreLangs();loadProjects();loadNotes();setInterval(loadNotes,8000);
+restoreLangs();migrateProjStore();loadProjects();loadNotes();setInterval(loadNotes,8000);
 </script></body></html>"""
 
 
