@@ -524,22 +524,38 @@ def search_notes(query: str, vault_root: str | None = None,
                                 words_present))
     scored.sort(key=lambda r: (-r[0], -r[1]))
 
-    # TIER 3(a): keyword matches WEAK (top hit matches < 50% of keywords)?
-    # -> run semantic override instead of returning noisy junk.
-    _best_distinct = scored[0][0] if scored else 0
-    if len(words) >= 4 and _best_distinct / len(words) < 0.5:
-        try:
-            _sem = _semantic_search_notes(query, vault)
-            if _sem and _sem[0]["score"] >= 0.5:
-                return json.dumps({
-                    "query": query, "mode": "semantic",
-                    "note": (f"keyword matches were weak ({_best_distinct}/"
-                             f"{len(words)} words); showing stronger SEMANTIC "
-                             "results (cross-language, ranked by meaning)"),
-                    "matches": len(_sem), "results": _sem},
-                    ensure_ascii=False, indent=1)
-        except Exception:
-            pass
+    # TIER 3(a): LUÔN thử semantic trước khi trả keyword. Lý do: (1) model
+    # nhỏ (Jan 4B) hay tự rút gọn câu hỏi thành 2-3 từ; (2) keyword mode
+    # match substring nên dễ ăn point oan ("bắt" + "bắt đầu"); (3) vault
+    # đa ngôn ngữ nên VI<->EN phải đi qua bge-m3. Page-vector đã cache theo
+    # mtime nên gọi lặp lại rất nhanh. Semantic mạnh (>=0.55) -> dùng luôn;
+    # yếu -> rơi về keyword như cũ.
+    _sem = None
+    try:
+        _sem = _semantic_search_notes(query, vault)
+    except Exception:
+        _sem = None
+    _kw_ratio = (scored[0][0] / len(words)) if scored else 0.0
+    if _sem and _sem[0].get("score", 0) >= 0.50:
+        why = ("" if not scored else
+               f"(keyword mode also matched {scored[0][0]}/{len(words)} "
+               "words but those hits rank below semantic) ")
+        return json.dumps({
+            "query": query, "mode": "semantic",
+            "note": (why + "SEMANTIC results, cross-language, ranked by "
+                     "meaning. Each result gives file and page number."),
+            "matches": len(_sem), "results": _sem},
+            ensure_ascii=False, indent=1)
+    if _sem and _sem[0].get("score", 0) >= 0.45:
+        return json.dumps({
+            "query": query, "mode": "semantic-low",
+            "note": ("LOW-CONFIDENCE semantic matches (scores are modest; "
+                     "the content may only be loosely related). Cross-"
+                     "language, ranked by meaning; best pages first. If "
+                     "nothing below is relevant, the content is probably "
+                     "not in the vault. Each result gives file and page."),
+            "matches": len(_sem), "results": _sem},
+            ensure_ascii=False, indent=1)
 
     results = []
     for distinct, total, fp, pno, a, seg, wp in scored[:max(3, max_hits)]:

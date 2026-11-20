@@ -504,10 +504,13 @@ def search_notes(query: str, max_hits: int = 15) -> str:
     that was ingested into the Vault or uploaded to a Project. Accepts FULL
     QUESTIONS - you do NOT need to shorten or rephrase:
       1) tries the whole query as an exact phrase first;
-      2) if no phrase match, automatically ranks best PAGES by keyword overlap;
-      3) if keywords also find nothing, runs a SEMANTIC cross-language search
-         (local bge-m3 embeddings) - so a VIETNAMESE question WILL match
-         ENGLISH notes by meaning. This takes care of translation itself.
+      2) always also runs a SEMANTIC cross-language search (local bge-m3
+         embeddings) - a VIETNAMESE question WILL match ENGLISH notes by
+         meaning, no translation needed; semantic results take priority
+         when they are stronger than keyword hits;
+      3) keyword page-ranking remains as the final fallback.
+    Each result carries "file" and "page" - always report the page number
+    to the user when quoting.
     Only state 'content is absent' when the final semantic mode (visible in
     the response "mode" field) returns zero matches.
     Excerpts are COMPLETE paragraphs - quote verbatim ONLY from the excerpt
