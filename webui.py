@@ -281,6 +281,15 @@ PAGE = """<!doctype html><html lang="vi"><head><meta charset="utf-8">
   --shadow:0 1px 0 #ffffff08 inset, 0 20px 50px -30px #000000cc;
   --sans:"Outfit",-apple-system,"SF Pro Text",system-ui,sans-serif;
   --mono:"JetBrains Mono","SF Mono",ui-monospace,monospace;
+  --line-strong:#333b46;
+}
+html[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f7f6f3; --panel:#ffffff; --panel2:#f1efe9;
+  --line:#e6e2d9; --text:#201f1c; --muted:#6e6b63; --faint:#a09d92;
+  --accent:#c06735; --accent-dim:#8a4a25; --ok:#2e8f57; --err:#bf4a37;
+  --shadow:0 1px 0 #ffffff inset, 0 20px 50px -28px #00000024;
+  --line-strong:#cfc9bd;
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -288,6 +297,7 @@ body{margin:0;background:var(--bg);color:var(--text);
   font:400 15px/1.55 var(--sans);
   background-image:radial-gradient(900px 480px at 85% -10%,#e08a5c12,transparent 60%),
                    radial-gradient(700px 420px at -10% 110%,#27413a14,transparent 65%)}
+html[data-theme="light"] body::before{filter:invert(1);opacity:.3}
 body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;z-index:0;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
 ::selection{background:#e08a5c33}
@@ -298,7 +308,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;z-
 #shell{display:grid;grid-template-columns:236px 1fr;min-height:100dvh}
 aside{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;
   gap:6px;padding:18px 14px;border-right:1px solid var(--line);
-  background:#0c0e11cc;backdrop-filter:blur(10px);z-index:4}
+  background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(10px);z-index:4}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15.5px;
   letter-spacing:-.01em;padding:2px 8px 14px}
 .mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#e89a6d,#c8704a);
@@ -355,7 +365,7 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 #drop small{display:block;margin-top:3px;color:var(--muted);font-size:12.5px}
 .kinds{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
 .kind{font:500 10.5px var(--mono);color:var(--faint);padding:4px 8px;
-  border:1px solid var(--line);border-radius:6px;background:#0c0e11}
+  border:1px solid var(--line);border-radius:6px;background:var(--bg)}
 #drop:hover .kind,#drop.over .kind{color:var(--accent);border-color:#e08a5c38}
 
 /* ---------- queue panels ---------- */
@@ -417,10 +427,11 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .ninfo{font:400 12px var(--mono);color:var(--muted);text-align:right;
   font-variant-numeric:tabular-nums}
 .acts{display:flex;gap:8px;justify-content:flex-end}
+.acts a,.acts button,.btn2,.jb{display:inline-flex;align-items:center;gap:6px}
 .acts a,.acts button{font:500 13px var(--sans);color:var(--muted);cursor:pointer;
   text-decoration:none;background:none;border:1px solid var(--line);
   padding:6px 12px;border-radius:8px;transition:color .2s,border-color .2s,transform .1s}
-.acts a:hover,.acts button:hover{color:var(--text);border-color:#333b46}
+.acts a:hover,.acts button:hover{color:var(--text);border-color:var(--line-strong)}
 .acts a:active,.acts button:active{transform:translateY(1px)}
 .empty{padding:52px 20px;text-align:center;color:var(--muted);
   border:1px dashed var(--line);border-radius:14px}
@@ -459,7 +470,7 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
  font:500 13px var(--sans);color:var(--text);cursor:pointer;background:var(--panel2);
  border:1px solid var(--line);padding:7px 12px;border-radius:9px;
  transition:border-color .18s,transform .1s}
-.projbtn:hover{border-color:#333b46}
+.projbtn:hover{border-color:var(--line-strong)}
 .projbtn:active{transform:translateY(1px)}
 .projbtn svg{opacity:.55;transition:transform .2s}
 .projdd.open .projbtn svg{transform:rotate(180deg)}
@@ -501,17 +512,22 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .btn2{font:500 13px var(--sans);color:var(--muted);cursor:pointer;background:none;
  border:1px solid var(--line);padding:7px 13px;border-radius:9px;
  transition:color .2s,border-color .2s,transform .1s}
-.btn2:hover{color:var(--text);border-color:#333b46}
+.btn2:hover{color:var(--text);border-color:var(--line-strong)}
 .btn2:active{transform:translateY(1px)}
 .btn2.busy{opacity:.4;pointer-events:none}
-.jb{font:500 11.5px var(--mono);color:var(--faint);border:1px solid var(--line);
+.jb{font:500 11.5px var(--mono);color:var(--faint);border:1px solid var(--line);.jb{display:inline-flex;align-items:center;gap:5px;
  padding:5px 9px;border-radius:7px;cursor:pointer;text-decoration:none;
  transition:color .18s,border-color .18s;white-space:nowrap}
-.jb:hover{color:var(--text);border-color:#333b46}
+.jb:hover{color:var(--text);border-color:var(--line-strong)}
 .jb.on{color:var(--ok);border-color:#4fb07133}
 .jb.busy{opacity:.4;pointer-events:none}
 .jb.okpop{animation:pop .4s ease}
 .toast.ok{border-color:#4fb07144;color:var(--ok)}
+.ic-moon{display:none}[data-theme="light"] .ic-sun{display:none}
+[data-theme="light"] .ic-moon{display:block}
+[data-theme="light"] .toast{box-shadow:0 12px 30px -14px #00000040}
+[data-theme="light"] .projpop{box-shadow:0 24px 60px -18px #00000030,0 1px 0 #ffffff60 inset}
+[data-theme="light"] ::selection{background:#c0673533}
 
 @media (max-width:860px){
   #shell{grid-template-columns:1fr}
@@ -526,6 +542,11 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   .ninfo{grid-column:1;text-align:left}
 }
 </style></head><body>
+<script>
+/* áp theme trước khi vẽ — mặc định SÁNG nếu chưa từng chọn */
+document.documentElement.dataset.theme=
+ (localStorage.getItem('vd.theme')||'light');
+</script>
 <div id="shell">
 <aside>
   <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none">
@@ -542,7 +563,14 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
       stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg>
     Thư viện <span class="nbadge" id="navCount">—</span></button>
   <div class="sidefoot">
-    <span class="srv"><span class="dot"></span> server đang chạy</span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="srv"><span class="dot"></span> server đang chạy</span>
+      <button class="xbtn" id="themebtn" aria-label="Chuyển sáng/tối" title="Sáng / tối"
+        style="width:26px;height:26px;font-size:12px">
+        <svg class="ic-sun" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ic-moon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
     <div class="vault" title=\"""" + html.escape(VAULT) + """">""" + html.escape(VAULT) + """</div>
   </div>
 </aside>
@@ -647,6 +675,13 @@ function showView(v){
  window.scrollTo({top:0,behavior:'smooth'});}
 $('#nav-up').onclick=()=>showView('upload');
 $('#nav-lib').onclick=()=>showView('library');
+
+/* ---------- theme sáng/tối ---------- */
+$('#themebtn').onclick=()=>{
+ const cur=document.documentElement.dataset.theme==='dark'?'dark':'light';
+ const next=cur==='dark'?'light':'dark';
+ document.documentElement.dataset.theme=next;
+ localStorage.setItem('vd.theme',next);};
 
 /* ---------- ngôn ngữ OCR ---------- */
 let selLangs=new Set();
@@ -945,10 +980,12 @@ function renderNotes(ns){
   <span class="ninfo">${n.mtime} · ${n.kb} KB</span>
   <span class="acts">
    <a class="jb ${st.cls}" data-jan="${esc(n.name)}"
-     title="Đồng bộ vào ${selProjs.size} project đang chọn">
-    ${st.txt}</a>
-   <a data-note="${esc(n.name)}">Xem</a>
-   <a href="/download/${encodeURIComponent(n.name)}">Tải .md</a></span></div>`}).join('');}
+     title="${selProjs.size?('Đồng bộ vào '+selProjs.size+' project đang chọn'):'Chọn Jan project ở trên'}">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h18l-1.4 11.2a2 2 0 0 1-2 1.8H6.4a2 2 0 0 1-2-1.8L3 8z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg>${st.txt}</a>
+   <a data-note="${esc(n.name)}" title="Xem trước note">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>Xem</a>
+   <a href="/download/${encodeURIComponent(n.name)}" title="Tải file .md">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 20h16"/></svg>Tải .md</a></span></div>`}).join('');}
 
 /* ---------- preview panel ---------- */
 const panel=$('#panel'),scrim=$('#scrim');

@@ -341,3 +341,14 @@ chunks) với checkbox, **chọn nhiều đích sync cùng lúc**. Lưu ý:
 - "Đồng bộ tất cả" và auto-sync sau OCR áp dụng cho mọi project được chọn.
 - `/jan-sync` nhận `projects: [id...]`; id không hợp lệ bị bỏ qua.
 - Lựa chọn lưu `localStorage` (`vd.projs`, migrate tự động từ `vd.proj` cũ).
+
+## 🎨 Theme sáng/tối + icon cho nút hành động
+
+- Toggle hai theme ở cuối sidebar (sun/moon); **mặc định nền sáng**; lựa
+  chọn lưu `localStorage` và áp trước khi trang vẽ (không flash).
+- Light: nền ấm `#f7f6f3`, card trắng, accent cam đậm hơn cho tương phản;
+  grain noise tự invert, bóng đổ nhẹ hơn. Dark giữ nguyên như cũ.
+- Nút "Xem" (con mắt), "Tải .md" (mũi tên xuống), Jan badge (khay vault)
+  giờ có icon SVG đồng bộ nét 2px với sidebar.
+- Tất cả màu hardcode đã biến hoá thành token (`--line-strong`...), hai
+  theme dùng chung 1 bộ biến.
