@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import sys
 
 from Foundation import NSURL, NSData
 from Quartz import (
@@ -441,13 +442,13 @@ def batch_ingest(folder: str, vault_root: str | None = None,
 
 def search_notes(query: str, vault_root: str | None = None,
                  max_hits: int = 15) -> str:
-    """Keyword search across Vault .md notes (Inbox/ + Notes/, skip Attachments).
-    Two modes, automatic:
-      1) EXACT PHRASE: whole query as substring - try first.
-      2) KEYWORDS RANK: if no phrase match, split the query into words and rank
-         every PAGE of every note by how many distinct words appear there
-         (stopwords removed). Long questions are fine - do not shorten them.
-    Returns mode, file, page, excerpt per hit.
+    """Search across Vault .md notes (Inbox/ + Notes/, skip Attachments).
+      1) EXACT PHRASE: whole query as substring - try first, return if hit.
+      2) SEMANTIC (bge-m3) + KEYWORDS RANK (per page, stopwords removed).
+         Strong semantic (>=0.50) wins; weak semantic (>=0.45) wins only
+         when keyword overlap < 50%; otherwise keyword pages are returned.
+         Embed server is always waited for (prewarmed at MCP startup).
+    Returns mode, file, page, excerpt per hit (+ semantic_error on failure).
     """
     import re as _re
     vault = os.path.abspath(os.path.expanduser(vault_root or VAULT_DEFAULT))
@@ -488,14 +489,9 @@ def search_notes(query: str, vault_root: str | None = None,
     _TOK = r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ\w]{3,}|\d[\d.,%]*"
     words = [w for w in _re.findall(_TOK, q)
              if w not in STOP]
-    if not words:
-        return json.dumps({"query": query, "mode": "keywords", "matches": 0,
-                           "results": [], "hint": "No usable keywords in query."},
-                          ensure_ascii=False, indent=1)
-
     _PAGE_RE = _re.compile(r"^## Trang (\d+)\s*$", _re.M)
     scored = []  # (distinct, total, file, page, first_idx, seg_txt)
-    for sub in ("Notes", "Inbox"):
+    for sub in (("Notes", "Inbox") if words else ()):
         d = os.path.join(vault, sub)
         if not os.path.isdir(d):
             continue
@@ -524,42 +520,50 @@ def search_notes(query: str, vault_root: str | None = None,
                                 words_present))
     scored.sort(key=lambda r: (-r[0], -r[1]))
 
-    # TIER 3(a): LUÔN thử semantic trước khi trả keyword. Lý do: (1) model
-    # nhỏ (Jan 4B) hay tự rút gọn câu hỏi thành 2-3 từ; (2) keyword mode
-    # match substring nên dễ ăn point oan ("bắt" + "bắt đầu"); (3) vault
-    # đa ngôn ngữ nên VI<->EN phải đi qua bge-m3. Page-vector đã cache theo
-    # mtime nên gọi lặp lại rất nhanh. Semantic mạnh (>=0.55) -> dùng luôn;
-    # yếu -> rơi về keyword như cũ.
-    _sem = None
-    try:
-        _sem = _semantic_search_notes(query, vault)
-    except Exception:
-        _sem = None
+    # TIER 3(a): thử semantic trước khi trả keyword. Lý do: (1) model nhỏ
+    # (Jan 4B) hay tự rút gọn câu hỏi thành 2-3 từ; (2) keyword mode match
+    # substring nên dễ ăn point oan ("bắt" + "bắt đầu"); (3) vault đa ngôn
+    # ngữ nên VI<->EN phải đi qua bge-m3. LUÔN chờ embed server (MCP server
+    # đã prewarm lúc khởi động): câu tiếng Việt dài gần như luôn có keyword
+    # hit rác (âm tiết phổ biến), nên "keyword có kết quả" KHÔNG phải lý do
+    # để bỏ semantic.
     _kw_ratio = (scored[0][0] / len(words)) if scored else 0.0
-    if _sem and _sem[0].get("score", 0) >= 0.50:
-        why = ("" if not scored else
-               f"(keyword mode also matched {scored[0][0]}/{len(words)} "
-               "words but those hits rank below semantic) ")
-        return json.dumps({
-            "query": query, "mode": "semantic",
-            "note": (why + "SEMANTIC results, cross-language, ranked by "
-                     "meaning. Each result gives file and page number."),
-            "matches": len(_sem), "results": _sem},
-            ensure_ascii=False, indent=1)
-    if _sem and _sem[0].get("score", 0) >= 0.45:
-        return json.dumps({
-            "query": query, "mode": "semantic-low",
-            "note": ("LOW-CONFIDENCE semantic matches (scores are modest; "
-                     "the content may only be loosely related). Cross-"
-                     "language, ranked by meaning; best pages first. If "
-                     "nothing below is relevant, the content is probably "
-                     "not in the vault. Each result gives file and page."),
-            "matches": len(_sem), "results": _sem},
-            ensure_ascii=False, indent=1)
+    _sem, _sem_err = None, None
+    try:
+        _sem = _semantic_search_notes(query, vault,
+                                      top_k=max(1, min(max_hits, 6)))
+    except Exception as e:  # embed server lỗi / timeout / thiếu model
+        _sem_err = f"{type(e).__name__}: {e}"
+        print(f"[search_notes] semantic search failed: {_sem_err}",
+              file=sys.stderr)
+    _top = _sem[0].get("score", 0) if _sem else 0.0
+
+    def _out(payload: dict) -> str:
+        payload = {"query": query, **payload}
+        if _sem_err:
+            payload["semantic_error"] = _sem_err
+        return json.dumps(payload, ensure_ascii=False, indent=1)
+
+    if _top >= 0.50:
+        return _out({"mode": "semantic",
+                     "note": ("SEMANTIC results, cross-language, ranked by "
+                              "meaning (best first). Each result gives file, "
+                              "page and score."),
+                     "matches": len(_sem), "results": _sem})
+    # Semantic yếu: chỉ ưu tiên khi keyword cũng yếu (< nửa số từ khoá).
+    if _top >= 0.45 and _kw_ratio < 0.5:
+        return _out({"mode": "semantic-low",
+                     "note": ("LOW-CONFIDENCE semantic matches (scores are "
+                              "modest; the content may only be loosely "
+                              "related). Cross-language, ranked by meaning. "
+                              "If nothing below is relevant, the content is "
+                              "probably not in the vault. Each result gives "
+                              "file and page."),
+                     "matches": len(_sem), "results": _sem})
 
     results = []
     for distinct, total, fp, pno, a, seg, wp in scored[:max(3, max_hits)]:
-        paragraphs = [p.strip() for p in seg.split("\\n\\n") if p.strip()]
+        paragraphs = [p.strip() for p in seg.split("\n\n") if p.strip()]
         best_paras = [p for p in paragraphs
                       if any(w in p.lower() for w in wp)][:3]
         if not best_paras:
@@ -567,31 +571,29 @@ def search_notes(query: str, vault_root: str | None = None,
         results.append({"file": fp, "page": pno,
                         "matched_keywords": wp,
                         "keyword_score": f"{distinct}/{len(words)} words",
-                        "excerpt": "\\n\\n".join(best_paras)})
-    if not results:
-        # ---------- TIER 3: semantic cross-language (bge-m3) ----------
-        try:
-            sem = _semantic_search_notes(query, vault)
-            if sem:
-                return json.dumps({"query": query, "mode": "semantic",
-                                   "note": ("keyword search found nothing, but "
-                                            "SEMANTIC search matched - results "
-                                            "ranked by meaning (cross-language)"),
-                                   "matches": len(sem), "results": sem},
-                                  ensure_ascii=False, indent=1)
-            hint = ("Not found by phrase, keywords or semantic search "
-                    "(threshold 0.45). The content is very likely absent "
-                    "from the vault notes.")
-        except Exception as e:
-            hint = (f"Keyword search found nothing and semantic fallback "
-                    f"failed: {e}")
-        return json.dumps({"query": query, "mode": "keywords+semantic",
-                           "matches": 0, "results": [], "hint": hint},
-                          ensure_ascii=False, indent=1)
-    return json.dumps({"query": query, "mode": "keywords-ranked",
-                       "note": "exact phrase not found - ranked best PAGES by keyword overlap",
-                       "keywords": words, "matches": len(results),
-                       "results": results}, ensure_ascii=False, indent=1)
+                        "excerpt": "\n\n".join(best_paras)})
+    if results:
+        payload = {"mode": "keywords-ranked",
+                   "note": ("exact phrase not found - ranked best PAGES by "
+                            "keyword overlap"),
+                   "keywords": words, "matches": len(results),
+                   "results": results}
+        if _sem:  # semantic-low nhưng keyword mạnh hơn -> đính kèm tham khảo
+            payload["semantic_low_results"] = _sem
+        return _out(payload)
+
+    if _sem_err:
+        hint = ("Keyword search found nothing and semantic search FAILED "
+                "(see semantic_error) - absence is NOT confirmed.")
+    elif not words:
+        hint = ("No usable keywords in query and semantic search found "
+                "nothing above threshold 0.45.")
+    else:
+        hint = ("Not found by phrase, keywords or semantic search "
+                "(threshold 0.45). The content is very likely absent "
+                "from the vault notes.")
+    return _out({"mode": "keywords+semantic", "matches": 0, "results": [],
+                 "hint": hint})
 
 
 # ---------------------------------------------------------------------------
@@ -649,18 +651,27 @@ def _es_health() -> bool:
         return False
 
 
-def _ensure_embed_server(timeout_s: int = 90) -> bool:
+_ES_PROC = None  # llama-server do process này spawn (tránh spawn trùng)
+
+
+def _ensure_embed_server(timeout_s: int = 90, wait: bool = True) -> bool:
+    """Bảo đảm embed server chạy. wait=False: nếu chưa sẵn sàng thì khởi
+    động ở nền (nếu chưa khởi động) rồi trả False ngay, không chặn."""
+    global _ES_PROC
     if _es_health():
         return True
     if not os.path.isfile(_BGE_GGUF) or not os.path.isfile(_LLAMA_SERVER):
         return False
-    os.makedirs(_EMB_CACHE_DIR, exist_ok=True)
-    log = open(os.path.join(_EMB_CACHE_DIR, "llama-server.log"), "ab")
-    _sp2.Popen([_LLAMA_SERVER, "-m", _BGE_GGUF, "--embeddings",
-                "--pooling", "cls", "-c", "2048", "-b", "2048", "-ub", "2048",
-                "-t", "4", "--host", "127.0.0.1",
-                "--port", str(_ES_PORT)],
-               stdout=log, stderr=_sp2.STDOUT, start_new_session=True)
+    if _ES_PROC is None or _ES_PROC.poll() is not None:
+        os.makedirs(_EMB_CACHE_DIR, exist_ok=True)
+        log = open(os.path.join(_EMB_CACHE_DIR, "llama-server.log"), "ab")
+        _ES_PROC = _sp2.Popen(
+            [_LLAMA_SERVER, "-m", _BGE_GGUF, "--embeddings",
+             "--pooling", "cls", "-c", "2048", "-b", "2048", "-ub", "2048",
+             "-t", "4", "--host", "127.0.0.1", "--port", str(_ES_PORT)],
+            stdout=log, stderr=_sp2.STDOUT, start_new_session=True)
+    if not wait:
+        return False
     deadline = _time.time() + timeout_s
     while _time.time() < deadline:
         if _es_health():
@@ -757,13 +768,14 @@ def _windows(text: str, max_chars: int = 800) -> list[str]:
 
 
 def _semantic_search_notes(query: str, vault: str,
-                           top_k: int = 6, thresh: float = 0.45):
+                           top_k: int = 6, thresh: float = 0.45,
+                           wait_for_server: bool = True):
     """Hai chang:
       1) rank TRANG bang embedding (cache);
       2) ZOOM-IN: voi top trang, embed tung cua so ~4 dong va tra ve cua so
          khop nghia nhat. Excerpt do chinh xac hon cau lap.
     Tra ve list {file, page, score, excerpt} hoac None."""
-    if not _ensure_embed_server():
+    if not _ensure_embed_server(wait=wait_for_server):
         return None
     qv = _embed_texts([query])[0]
     cache = _vault_page_vectors(vault)
@@ -799,6 +811,6 @@ def _semantic_search_notes(query: str, vault: str,
         per_page[(fp, p)] = n_this_page + 1
         results.append({"file": fp, "page": p, "score": round(ws, 3),
                         "excerpt": (" ".join(w.split()))[:1600]})
-        if len(results) >= max(top_k, 6):
+        if len(results) >= top_k:
             break
     return results or None

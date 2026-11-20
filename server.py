@@ -61,6 +61,14 @@ MCP = FastMCP(
     "vision-docs",
     instructions=(
         "Read PDF/DOCX/MD/TXT/images locally on the Mac using Apple's Vision OCR. "
+        "TWO SOURCES OF VAULT CONTENT - pick deliberately: (a) Jan project "
+        "RAG: chunks Jan already injects into the conversation (Vault notes "
+        "are auto-synced into the project) - fine for general Q&A and "
+        "summaries; (b) search_notes: call it whenever you must QUOTE, give "
+        "a PAGE NUMBER, check an exact figure/name, when RAG context is "
+        "empty or looks unrelated, or before saying something is not in the "
+        "documents. RAG chunks carry no page numbers - never invent one; "
+        "get it from search_notes. "
         "CRITICAL RULE - NEVER INVENT A FILENAME: only search files that the "
         "user actually mentioned, that exist in the conversation, or that are "
         "in ~/Documents/Vault (Inbox/ or Notes/). If the user's question does "
@@ -347,13 +355,23 @@ def search_pdf(
     languages: str = DEFAULT_LANGS,
     context_chars: int = 260,
 ) -> str:
-    """OCR locally (Vision) then find `query` - returns PAGE + surrounding text.
-    THIS is the tool for 'where is X mentioned in the PDF'; far cheaper than
-    ocr_pdf.
+    """OCR locally (Vision) then find `query` in ONE PDF FILE THE USER NAMED -
+    returns PAGE + surrounding text. Far cheaper than ocr_pdf.
+    If the user did not name a PDF file, do NOT use this tool - call
+    search_notes (searches every ingested document). If `path` cannot be
+    found, this tool automatically falls back to search_notes.
     NOTE: query must be a keyword in the DOCUMENT'S language (an English PDF
     needs English keywords such as hunt/trade/pilgrim/migration - not a
     Vietnamese translation). Call once per keyword."""
-    doc, n, resolved = _load_pdf(path)
+    try:
+        doc, n, resolved = _load_pdf(path)
+    except FileNotFoundError:
+        # Model nhỏ hay bịa tên file ("document.pdf") — thay vì trả lỗi khiến
+        # nó đi lạc, tìm luôn trong các note Vault đã OCR.
+        res = json.loads(server_extra.search_notes(query, None, 15))
+        res["note"] = (f"File {path!r} does not exist - searched the Vault "
+                       "notes instead (search_notes). " + res.get("note", ""))
+        return json.dumps(res, ensure_ascii=False, indent=1)
     first, last = _norm_range(first_page, last_page, n)
     langs = [s.strip() for s in languages.split(",") if s.strip()] or DEFAULT_LANGS.split(",")
     q = query.strip().lower()
@@ -373,7 +391,10 @@ def search_pdf(
             hits.append({"page": p, "excerpt": flat[start: idx + context_chars]})
             idx = flat.lower().find(q, idx + len(q))
     if not hits:
-        return f"No match for '{query}' in pages {first}-{last}/{n}."
+        return (f"No exact match for '{query}' in pages {first}-{last}/{n} "
+                "of this PDF (search_pdf only matches the literal text). For a "
+                "paraphrase, a full sentence or a question in another "
+                "language, call search_notes (semantic, cross-language).")
     return json.dumps({"query": query, "matches": len(hits), "results": hits},
                       ensure_ascii=False, indent=1)
 
@@ -434,6 +455,10 @@ def main() -> int:
     args, _ = ap.parse_known_args()
     if args.selftest:
         return _selftest(args.selftest, args.dpi, args.langs)
+    try:  # prewarm bge-m3 để search_notes đầu tiên không dính cold start
+        server_extra._ensure_embed_server(wait=False)
+    except Exception:
+        pass
     MCP.run(transport="stdio")
     return 0
 
@@ -503,16 +528,20 @@ def search_notes(query: str, max_hits: int = 15) -> str:
     instant, zero OCR cost. Use this first when the user refers to a document
     that was ingested into the Vault or uploaded to a Project. Accepts FULL
     QUESTIONS - you do NOT need to shorten or rephrase:
-      1) tries the whole query as an exact phrase first;
-      2) always also runs a SEMANTIC cross-language search (local bge-m3
+      1) tries the whole query as an exact phrase first (mode
+         "exact-phrase"); if it matches, that is returned directly;
+      2) otherwise runs a SEMANTIC cross-language search (local bge-m3
          embeddings) - a VIETNAMESE question WILL match ENGLISH notes by
-         meaning, no translation needed; semantic results take priority
-         when they are stronger than keyword hits;
-      3) keyword page-ranking remains as the final fallback.
+         meaning, no translation needed - together with keyword
+         page-ranking. Response "mode" is one of:
+           "semantic"        strong semantic matches;
+           "semantic-low"    weak semantic matches, keyword hits weaker;
+           "keywords-ranked" keyword hits (may carry "semantic_low_results");
+           "keywords+semantic" with matches 0 - nothing found.
     Each result carries "file" and "page" - always report the page number
     to the user when quoting.
-    Only state 'content is absent' when the final semantic mode (visible in
-    the response "mode" field) returns zero matches.
+    Only state 'content is absent' when mode is "keywords+semantic" with
+    zero matches AND the response has no "semantic_error" field.
     Excerpts are COMPLETE paragraphs - quote verbatim ONLY from the excerpt
     text; never complete a truncated sentence from imagination. If you need
     more surrounding text, call again with a phrase copied from the excerpt.
