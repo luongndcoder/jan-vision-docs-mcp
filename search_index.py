@@ -170,7 +170,12 @@ _MAT: dict = {"key": None, "ids": None, "mat": None, "paths": None, "pages": Non
 
 
 def _matrix(c: sqlite3.Connection):
-    key = (db_path(), *c.execute("SELECT COALESCE(MAX(id),0),COUNT(*) FROM chunks").fetchone())
+    # (max id, count) is not enough: re-indexing the note holding the highest
+    # ids with the same chunk count reuses the same rowids -> stale vectors.
+    # Every (re)index changes notes(mtime,size), so fingerprint those too.
+    key = (db_path(),
+           *c.execute("SELECT COALESCE(MAX(id),0),COUNT(*) FROM chunks").fetchone(),
+           *c.execute("SELECT COUNT(*),TOTAL(mtime),TOTAL(size) FROM notes").fetchone())
     if _MAT["key"] != key:
         rows = c.execute("SELECT id,path,page,vec FROM chunks ORDER BY id").fetchall()
         _MAT["ids"] = np.array([r[0] for r in rows], dtype=np.int64)
