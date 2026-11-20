@@ -39,12 +39,15 @@ cd ~/Documents/AI/jan-vision-docs-mcp
 
 ```json
 "vision-docs": {
-  "command": "~/Documents/AI/jan-vision-docs-mcp/.venv/bin/python",
-  "args": ["~/Documents/AI/jan-vision-docs-mcp/server.py"],
-  "env": { "PDF_OCR_LANGS": "vi-VT,en-US" },
+  "command": "<vị-trí-repo>/.venv/bin/python",
+  "args": ["<vị-trí-repo>/server.py"],
+  "env": { "PDF_OCR_LANGS": "vi-VN,en-US", "PDF_OCR_VAULT": "<vault>" },
   "active": true
 }
 ```
+
+> `<vị-trí-repo>` là đường dẫn tuyệt đối tới thư mục gốc trên máy — `install.sh`
+> (bước patch_jan_config.py) tự điền đúng, không phải copy tay.
 
 `mcpSettings.toolCallTimeoutSeconds` đã tăng 30 → 180 (OCR nhiều trang lâu hơn).
 Restart Jan → Settings → MCP Servers phải thấy `vision-docs` active.
