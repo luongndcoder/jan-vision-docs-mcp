@@ -45,6 +45,8 @@ SUPPORTED = {".pdf", ".docx", ".md", ".markdown", ".txt", ".text",
              ".webp", ".bmp", ".gif"}
 
 app = FastAPI(title="jan-vision-docs web UI", docs_url=None, redoc_url=None)
+import os as _os
+BUILD = str(int(_os.path.getmtime(__file__)))
 
 JOBS: dict[str, dict] = {}
 Q: "queue.Queue[str]" = queue.Queue()
@@ -89,6 +91,11 @@ def healthz():
     return "ok"
 
 
+@app.get("/meta")
+def meta():
+    return {"build": BUILD}
+
+
 @app.post("/upload")
 async def upload(files: list[UploadFile] = File(...)):
     out = []
@@ -97,6 +104,13 @@ async def upload(files: list[UploadFile] = File(...)):
         ext = os.path.splitext(base)[1].lower()
         if ext not in SUPPORTED:
             out.append({"name": base, "error": f"Định dạng không hỗ trợ: {ext}"})
+            continue
+        dup = next((j["id"] for j in JOBS.values()
+                    if j["name"] == base and j["status"] in ("pending", "running")),
+                   None)
+        if dup:
+            out.append({"id": dup, "name": base, "status": "waiting",
+                        "dup": True})
             continue
         # stage inside a per-job subdir so the ORIGINAL stem is preserved
         # (ingest_document derives the note name from the file stem)
@@ -374,7 +388,11 @@ h2{font-size:13px;font-weight:600;color:var(--faint);letter-spacing:.08em;
 <div class="toast" id="toast"></div>
 
 <script>
+const BUILD="__BUILD__";
 const $=s=>document.querySelector(s);
+function fjson(url,opts={},ms=6000){
+ const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);
+ return fetch(url,{...opts,signal:c.signal}).finally(()=>clearTimeout(t));}
 const drop=$('#drop'),fi=$('#file'),jobsEl=$('#jobs'),notesEl=$('#notes');
 let z=0;
 drop.onclick=()=>fi.click();
@@ -393,12 +411,17 @@ async function send(fs){
  drop.classList.remove('over');
  let r;try{r=await(await fetch('/upload',{method:'POST',body:fd})).json();}
  catch(e){toast('Không tải lên được — server có chạy không?');return;}
- r.jobs.forEach(j=>{if(j.error){
+ r.jobs.forEach(j=>{
+  if(j.dup){return;}          /* đã có job này — không thêm card đúp */
+  if(j.error){
    const d=document.createElement('div');d.className='job';
    d.innerHTML=`<span class="jstat fail" style="grid-column:1">⚠</span>
    <div><div class="jname">${j.name}</div></div>
-   <span class="jstat fail">${j.error}</span>`;jobsEl.prepend(d);}
-  else addCard(j.id,j.name);});
+   <span class="jstat fail">${j.error}</span>`;jobsEl.prepend(d);
+   return;}
+  if(!document.getElementById('j_'+j.id))addCard(j.id,j.name);});
+ const allDup=r.jobs.length&&r.jobs.every(j=>j.dup);
+ if(allDup)toast('File này đang được OCR rồi — theo dõi card phía trên.');
  fi.value='';}
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -417,7 +440,10 @@ function addCard(id,name){
  cards.set(id,'__new');}
 
 function apply(j){
- const id=j.id,prev=cards.get(id);
+ const id=j.id;
+ if(!document.getElementById('j_'+id)&&
+    (j.status==='pending'||j.status==='running'))addCard(id,j.name);
+ const prev=cards.get(id);
  if(!prev)return;                       // card lỗi format, không theo dõi
  if(prev===j.status)return;             /* KHÔNG đổi gì — bỏ qua, không vẽ */
  cards.set(id,j.status);
@@ -437,21 +463,27 @@ function apply(j){
 jobsEl.addEventListener('click',e=>{const a=e.target.closest('[data-note]');
  if(a){e.preventDefault();openPanel(a.dataset.note);}});
 
-let seenErr=0;
+let seenErr=0,dead=false;
 async function poll(){
- try{const js=await(await fetch('/jobs')).json();
+ if(dead)return;
+ try{
+  const js=await(await fjson('/jobs')).json();
   const ids=new Set(js.map(j=>j.id));js.forEach(apply);
   cards.forEach((_,id)=>{if(!ids.has(id)&&document.getElementById('j_'+id)){
    document.getElementById('j_'+id).remove();cards.delete(id);}});
-  seenErr=0;}
- catch(e){seenErr++;if(seenErr===2)toast('Mất kết nối tới server.');}}
+  seenErr=0;
+  try{const m=await(await fjson('/meta')).json();
+   if(m.build!==BUILD){dead=true;                 /* server có bản mới */
+    toast('Có phiên bản mới — đang tải lại trang…');
+    setTimeout(()=>location.reload(),900);}}catch(e){}
+ }catch(e){seenErr++;if(seenErr===2)toast('Mất kết nối tới server.');}}
 setInterval(poll,1500);poll();
 
 /* ---- notes: chỉ vẽ lại khi dữ liệu thật sự đổi (signature check) ---- */
 let notesSig='';
 function gkey(n){return n.name+'|'+n.mtime+'|'+n.kb}
 async function loadNotes(force){
- let ns;try{ns=await(await fetch('/notes')).json();}catch(e){return;}
+ let ns;try{ns=await(await fjson('/notes')).json();}catch(e){return;}
  const sig=JSON.stringify(ns.map(gkey));
  if(sig===notesSig&&!force)return;       /* không đổi — không vẽ, không giật */
  notesSig=sig;
@@ -493,7 +525,7 @@ loadNotes();setInterval(loadNotes,8000);
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return PAGE
+    return PAGE.replace("__BUILD__", BUILD)
 
 
 if __name__ == "__main__":
