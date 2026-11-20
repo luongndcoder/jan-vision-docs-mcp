@@ -28,6 +28,7 @@ import glob
 import json
 import os
 import sqlite3
+import time
 import struct
 import uuid
 
@@ -61,17 +62,31 @@ def list_projects() -> list[dict]:
     for fp in sorted(glob.glob(os.path.join(DB_DIR, "project_*.db"))):
         pid = os.path.basename(fp)[len("project_"):-len(".db")]
         if os.path.getsize(fp) == 0:
+            # Jan 0.8.8 tạo file DB rỗng ngay khi tạo project — chưa ghi
+            # schema hay metadata gì; coi như project mới, còn sống.
+            out.append({"id": pid, "name": "(mới tạo trong Jan)", "refs": 0,
+                        "alive": True, "db": fp, "files": 0, "chunks": 0,
+                        "new": True})
             continue
         try:
-            con = sqlite3.connect(fp, timeout=5)
-            files = con.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-            chunks = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-            con.close()
+            con = sqlite3.connect(fp, timeout=5)  # read-only count, KHÔNG init schema
+            try:
+                files = con.execute(
+                    "SELECT COUNT(*) FROM files").fetchone()[0]
+                chunks = con.execute(
+                    "SELECT COUNT(*) FROM chunks").fetchone()[0]
+            except sqlite3.Error:  # db có dữ liệu nhưng chưa schema (hiếm)
+                files, chunks = 0, 0
+            finally:
+                con.close()
         except sqlite3.Error:
             continue
         refs, name = _project_refs(pid)
+        # project mới sync (chưa có thread nào trong Jan tham chiếu) sẽ
+        # bị oan là ghost; Grace period 2h kể từ lần ghi gần nhất.
+        fresh = time.time() - os.path.getmtime(fp) < 7200
         out.append({"id": pid, "name": name or pid, "refs": refs,
-                    "alive": refs > 0,
+                    "alive": refs > 0 or fresh, "fresh": fresh,
                     "db": fp, "files": files, "chunks": chunks})
     return out
 
@@ -93,9 +108,33 @@ def purge_project(pid: str) -> str:
     raise FileNotFoundError(f"không có project {pid}")
 
 
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS files (
+    id TEXT PRIMARY KEY,
+    path TEXT UNIQUE NOT NULL,
+    name TEXT,
+    type TEXT,
+    size INTEGER,
+    chunk_count INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS chunks (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    file_id TEXT,
+    chunk_file_order INTEGER,
+    FOREIGN KEY (file_id) REFERENCES files(id)
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_id ON chunks(id);
+CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_file_order ON chunks(file_id, chunk_file_order);
+"""
+
+
 def _conn(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db, timeout=10)
     con.execute("PRAGMA busy_timeout=10000")
+    con.executescript(SCHEMA)  # Jan 0.8.8 tạo DB rỗng 0-byte — tự khởi tạo schema
     return con
 
 
