@@ -68,6 +68,100 @@ Mở Jan → Assistants → Jan → Instructions, dán khối trong
 [prompts/jan-assistant-instructions.md](prompts/jan-assistant-instructions.md), lưu rồi tạo
 **thread mới** (thread cũ giữ prompt cũ). Model phải hỗ trợ tool calling.
 
+## Cài bằng agent (máy mới)
+
+Máy mới có agent CLI (Claude Code, Codex…): mở terminal, chạy agent rồi dán nguyên khối dưới đây.
+Agent tự kiểm tra, cài, thay embedding model của Jan và verify; chỉ dừng lại hỏi khi cần người dùng
+thao tác (cài/thoát Jan, dán prompt). Prompt viết tiếng Anh cho agent đọc chuẩn hơn.
+
+````text
+You are a setup agent on this macOS machine. Install and verify jan-vision-docs-mcp:
+a fully OFFLINE document-research stack for the Jan desktop app (Apple Vision OCR,
+a Vault of .md notes, bge-m3 semantic search via a local llama-server, a localhost
+web UI, and an MCP server for Jan). Work autonomously; stop and ask the user only
+where a step says ASK USER.
+
+Ground rules
+- Never claim a check passed unless you ran it and saw the output. Report failures verbatim.
+- Before modifying any file under ~/Library/Application Support/Jan, make a .bak copy.
+- Never skip or bypass the SHA256 check of the model download.
+- Do not modify Jan files while Jan is running (check: `pgrep -f "Jan.app"` must print nothing).
+
+Step 1 - Preconditions (fix what you safely can)
+- macOS 13+ (`sw_vers`); Apple Silicon preferred (`uname -m` = arm64).
+- python3 >= 3.9 (`python3 --version`); if missing: `xcode-select --install` or `brew install python`.
+- Homebrew + llama.cpp: `command -v llama-server || brew install llama.cpp`
+  (no internet: llama-server must already be installed or copied into /opt/homebrew/bin).
+- Jan app: `/Applications/Jan.app` and `~/Library/Application Support/Jan/data` must exist.
+  If not: ASK USER to install Jan from https://jan.ai, open it once, then quit it (Cmd+Q).
+
+Step 2 - Get the code
+- Online:  git clone https://github.com/luongndcoder/jan-vision-docs-mcp.git ~/Documents/AI/jan-vision-docs-mcp
+- Offline: the user copied the repo folder (with `wheels/` and `models/bge-m3-Q8_0.gguf`)
+  to ~/Documents/AI/jan-vision-docs-mcp. Use it as is.
+- cd into the repo for all remaining steps.
+
+Step 3 - Install
+- Run: `bash install.sh`   (vault defaults to ~/Documents/Vault; prefix PDF_OCR_VAULT=/path to change)
+  Flags if needed: --no-jan --no-model --no-web --with-watch.
+- Expect: .venv created with deps (offline from wheels/ if present), bge-m3-Q8_0.gguf found or
+  downloaded (~634 MB, SHA256-checked) into models/, server `vision-docs` registered in
+  ~/Library/Application Support/Jan/data/mcp_config.json (a .bak is written), web UI installed as
+  launchd agent `ai.jan.visdocs.webui`. If the download fails, retry once.
+
+Step 4 - Switch Jan's embedding model to bge-m3 (MANDATORY)
+Jan indexes project files with its own embedder (stock: MiniLM, 384-dim). This stack writes
+1024-dim bge-m3 vectors, so Jan's embedder must be bge-m3 or Jan's RAG silently finds nothing.
+- ASK USER to quit Jan (Cmd+Q). Wait until `pgrep -f "Jan.app"` prints nothing.
+- D="$HOME/Library/Application Support/Jan/data/llamacpp/models/sentence-transformer-mini"
+- If "$D/model.gguf" exists and is NOT already ~634 MB: copy model.gguf -> model.gguf.minilm.bak
+  and model.yml -> model.yml.minilm.bak, then copy the repo's models/bge-m3-Q8_0.gguf to
+  "$D/model.gguf". In "$D/model.yml" set `pooling: cls` and set `size_bytes:` to the new file size.
+- If "$D" does not exist (Jan never bootstrapped its embedder, e.g. offline machine): create it,
+  copy the model as "$D/model.gguf", and write "$D/model.yml":
+      model_path: llamacpp/models/sentence-transformer-mini/model.gguf
+      name: all-MiniLM-L6-v2
+      size_bytes: <size of model.gguf in bytes>
+      embedding: true
+      pooling: cls
+      ubatch_size: 2048
+      batch_size: 2048
+- Verify: `.venv/bin/python jan_sync.py --embed-check` must print "ok": true, "dim": 1024, "pooling": "cls".
+
+Step 5 - Verify the stack (all must pass; fix and re-run if not)
+- `launchctl list | grep ai.jan.visdocs` shows the webui agent.
+- `curl -s http://127.0.0.1:8765/healthz` returns "ok"; `curl -s http://127.0.0.1:8765/jan-embed` has "ok":true.
+- MCP tools: `.venv/bin/python -c "import asyncio,server;print([t.name for t in asyncio.run(server.MCP.list_tools())])"`
+  must list exactly: search_pdf, ingest_document, list_notes, read_note, search_notes.
+- End-to-end: create a small test file, e.g. `printf "## Trang 1\n\nVision docs install test: the quick brown fox jumps over the lazy dog near the river bank today.\n" > /tmp/vd_install_test.md`,
+  upload it: `curl -s -F files=@/tmp/vd_install_test.md -F langs=vi-VN,en-US http://127.0.0.1:8765/upload`,
+  poll `curl -s http://127.0.0.1:8765/jobs` until its status is "done" (max ~90 s), then run
+  `.venv/bin/python -c "import json,server_extra as s;r=json.loads(s.search_notes('con cáo nhảy qua con chó lười'));print(r['mode'],r['matches'])"`
+  -> expect matches >= 1 (a Vietnamese query finding English text proves cross-language search).
+  Then delete the test note: `curl -s -X POST -H 'Content-Type: application/json' -d '{"name":"vd_install_test.md"}' http://127.0.0.1:8765/note-delete`.
+- Offline check (optional, needs Jan open): `bash offline_check.sh 60` -> "External" should list
+  at most Jan's own update check (apps.jan.ai).
+
+Step 6 - Hand over to the user (ASK USER to do these in Jan; you cannot click in Jan)
+1. Open Jan. Create a Project (e.g. "Docs"); it appears in the web UI project dropdown.
+2. Settings -> Assistants -> Jan -> Instructions: paste the block from
+   prompts/jan-assistant-instructions.md, save. Always start a NEW thread afterwards.
+3. Recommended settings for a 4B local model on Apple Silicon:
+   - Model Providers -> Llama.cpp: Flash Attention = on, KV Cache K/V Type = q8_0,
+     Prompt Cache RAM = 2048, Cache Reuse = 256, Preserve Reasoning History = off.
+   - Model settings (Jan-v3.5-4B): Context Size = 32768, GPU Layers = -2,
+     Temperature = 0.6, Top K = 20, Min P = 0.
+   - Attachments: Vector Search Mode = Linear, Affinity Threshold = 0.5, Auto inline threshold = 0.4.
+   - Disable unused cloud providers so only local models are selectable.
+4. Open http://127.0.0.1:8765, select the project, drag-drop documents. Notes auto-sync to Jan.
+5. Fully quit Jan (Cmd+Q) and reopen once more so it loads the MCP server and model settings.
+
+Step 7 - Report back
+Repo path, vault path, Python version, llama-server path, model path + SHA status, result of every
+check in Step 5 (pass/fail with output), whether Step 4 was done, which Step 6 items remain for the
+user, and the uninstall commands from the README section "Gỡ cài đặt".
+````
+
 ## Sử dụng
 
 Mở http://127.0.0.1:8765 (chỉ truy cập được từ máy này; đổi port bằng `PDF_OCR_WEBUI_PORT`).
