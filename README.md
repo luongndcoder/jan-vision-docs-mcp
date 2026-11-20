@@ -289,3 +289,27 @@ GET  /jobs          ← trạng thái từng file: pending → running → done/
   xử lý trùng file.
 - Cài: `bash install_webui.sh` (install.sh tự gọi). Gỡ: `launchctl bootout
   gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.webui.plist`.
+
+## 🔁 Đồng bộ thẳng vào Jan project (không cần mở Jan kéo file)
+
+Bước thủ công "mở Jan → kéo .md vào project" giờ không cần nữa. Jan index
+file theo **đường dẫn gốc** trong `data/db/project_<id>.db`:
+
+```
+files(id, path UNIQUE, name, type, size, chunk_count)
+chunks(id, text, embedding BLOB float32-1024, file_id, chunk_file_order)
+```
+
+`jan_sync.py` tái hiện đúng pipeline của Jan: cắt chunk **512 ký tự** (không
+overlap — check với project 637 chunks do chính Jan tạo), embedding **bge-m3**
+qua llama-server local, ghi float32 little-endian поход cùng format. Note được
+thêm/đổi thì re-index (DELETE + INSERT transaction).
+
+- **Tự động**: OCR xong là note vào project đang chọn + toast thông báo.
+- Trong tab **Thư viện**: chọn Jan project (select) → từng note có nút
+  `→ Jan` / `✓ Jan nk`, hoặc bấm **Đồng bộ tất cả**.
+- CLI: `.venv/bin/python jan_sync.py --list | --all | "<note.md>"`
+
+Yêu cầu duy nhất: đã có project trong Jan (tạo 1 lần trong app).
+Lưu ý nếu vault dùng Obsidian di chuyển note sau khi sync, chạy lại sync
+để cập nhật path mới.

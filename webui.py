@@ -30,6 +30,7 @@ import threading
 import time
 import uuid
 
+import jan_sync
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 import uvicorn
@@ -173,6 +174,62 @@ def note(name: str):
 def download(name: str):
     fp = _note_path(name)
     return FileResponse(fp, filename=os.path.basename(fp))
+
+
+def _vault_note_paths() -> list[str]:
+    """Absolute paths of every vault note (same order as /notes)."""
+    paths = []
+    for sub in ("Inbox", "Notes"):
+        d = os.path.join(VAULT, sub)
+        if not os.path.isdir(d):
+            continue
+        for n in sorted(os.listdir(d)):
+            if n.lower().endswith(".md"):
+                paths.append(os.path.join(d, n))
+    return paths
+
+
+def _proj_db(project_id: str) -> str | None:
+    for p in jan_sync.list_projects():
+        if p["id"] == project_id:
+            return p["db"]
+    return None
+
+
+@app.get("/projects")
+def projects():
+    return jan_sync.list_projects()
+
+
+@app.get("/jan-state")
+def jan_state(project: str = ""):
+    if not project:
+        return {}
+    db = _proj_db(project)
+    if not db:
+        return {"error": "không thấy project"}
+    return {"project": project,
+            "state": jan_sync.project_state(db, _vault_note_paths())}
+
+
+@app.post("/jan-sync")
+def jan_sync_ep(body: dict):
+    names = body.get("notes") or []
+    project_id = body.get("project") or ""
+    db = _proj_db(project_id)
+    if not db:
+        return {"error": "không thấy project — tạo project trong Jan trước"}
+    if not names:  # all vault notes
+        return jan_sync.sync_all(db, VAULT)
+    out = []
+    for name in names:
+        try:
+            fp = _note_path(name)
+        except HTTPException:
+            out.append({"note": name, "ok": False, "error": "không có note"})
+            continue
+        out.append({"note": name, **jan_sync.sync_note(db, fp)})
+    return {"results": out}
 
 
 _FAVICON = ("data:image/svg+xml," +
@@ -369,6 +426,27 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   transition:transform .3s cubic-bezier(.2,.8,.25,1);box-shadow:var(--shadow)}
 .toast.on{transform:translate(-50%,0)}
 
+/* ---------- jan sync ---------- */
+.projbar{display:flex;gap:10px;align-items:center;margin:2px 0 16px;flex-wrap:wrap}
+.projbar label{color:var(--muted);font-size:13px}
+#proj{background:var(--panel);border:1px solid var(--line);color:var(--text);
+ font:500 13px var(--sans);padding:7px 10px;border-radius:9px;cursor:pointer}
+#proj:focus-visible{outline-offset:0}
+.btn2{font:500 13px var(--sans);color:var(--muted);cursor:pointer;background:none;
+ border:1px solid var(--line);padding:7px 13px;border-radius:9px;
+ transition:color .2s,border-color .2s,transform .1s}
+.btn2:hover{color:var(--text);border-color:#333b46}
+.btn2:active{transform:translateY(1px)}
+.btn2.busy{opacity:.4;pointer-events:none}
+.jb{font:500 11.5px var(--mono);color:var(--faint);border:1px solid var(--line);
+ padding:5px 9px;border-radius:7px;cursor:pointer;text-decoration:none;
+ transition:color .18s,border-color .18s;white-space:nowrap}
+.jb:hover{color:var(--text);border-color:#333b46}
+.jb.on{color:var(--ok);border-color:#4fb07133}
+.jb.busy{opacity:.4;pointer-events:none}
+.jb.okpop{animation:pop .4s ease}
+.toast.ok{border-color:#4fb07144;color:var(--ok)}
+
 @media (max-width:860px){
   #shell{grid-template-columns:1fr}
   aside{position:static;height:auto;flex-direction:row;align-items:center;
@@ -445,6 +523,12 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
         <button class="chip" data-f="Inbox">Inbox</button>
         <button class="chip" data-f="Notes">Notes</button>
       </div>
+    </div>
+    <div class="projbar" id="projwrap">
+      <label>Jan project</label>
+      <select id="proj" aria-label="Chọn Jan project"></select>
+      <button class="btn2" id="syncall">Đồng bộ tất cả</button>
+      <span class="qstat" id="janinfo"></span>
     </div>
     <div id="notes"></div>
   </section>
@@ -553,7 +637,7 @@ function setDone(c,j){
  c.el.querySelector('.jact').outerHTML=
   `<span class="jact ok">${j.seconds}s&nbsp;<a href="#" data-note="${esc(j.note)}">xem note</a></span>`;
  c.el.querySelector('.jinfo').textContent='→ '+j.note;
- moveToDone(c);loadNotes();}
+ moveToDone(c);loadNotes();autoJan(j.note);}
 
 function setFailed(c,j){
  const id=j.id,st=document.getElementById('s_'+id);
@@ -621,6 +705,70 @@ setInterval(()=>{lastJobs.forEach((j,id)=>{
  const t=document.getElementById('e_'+id);
  if(t&&j.started)t.textContent=((Date.now()/1000-j.started)|0)+'s';});},1000);
 
+/* ---------- Jan project sync ---------- */
+let projList=[],curProj=localStorage.getItem('vd.proj')||'',
+    janMap={},janByName={},janSig='Ø';
+function projName(){const p=projList.find(p=>p.id===curProj);return p?p.name:''}
+async function loadProjects(){
+ try{projList=await(await fjson('/projects')).json();}catch(e){projList=[]}
+ if(!projList.length){$('#projwrap').style.display='none';janSig='';renderNotes(lastNotes);return;}
+ $('#proj').innerHTML=projList.map(p=>
+  `<option value="${p.id}">${esc(p.name)} · ${p.files} file</option>`).join('');
+ if(!projList.some(p=>p.id===curProj))curProj=projList[0].id;
+ $('#proj').value=curProj;localStorage.setItem('vd.proj',curProj);
+ loadJan();}
+$('#proj').onchange=e=>{curProj=e.target.value;
+ localStorage.setItem('vd.proj',curProj);loadJan();};
+async function loadJan(force){
+ if(!curProj){return;}
+ try{const r=await(await fjson('/jan-state?project='+encodeURIComponent(curProj))).json();
+  janMap=r.state||{};}catch(e){janMap={}}
+ janByName={};
+ Object.keys(janMap).forEach(p=>{janByName[p.split('/').pop()]=janMap[p].chunk_count});
+ const sig=JSON.stringify(janByName);
+ const nIn=Object.keys(janByName).length;
+ $('#janinfo').innerHTML=`<b>${nIn}</b>/${lastNotes.length||'…'} đã trong Jan`;
+ if(sig!==janSig||force){janSig=sig;renderNotes(lastNotes);}}
+async function syncOne(name,btn){
+ if(!curProj){toast('Chọn Jan project trước đã.');return;}
+ if(btn){btn.classList.add('busy');}
+ let ok=false,msg='';
+ try{const r=await(await fjson('/jan-sync',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({notes:[name],project:curProj})})).json();
+  const res=(r.results||[])[0];
+  if(r.error){msg=r.error;}
+  else if(res&&!res.ok){msg=res.error||'lỗi';}
+  else{ok=true;msg=`${projName()} ← ${name} `+
+   (res.skipped?'(đã có từ trước)':`(${res.chunks} chunks)`);}}
+ catch(e){msg='không kết nối được server';}
+ if(btn){btn.classList.remove('busy');}
+ toast(msg,ok);
+ loadJan(true);}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-jan]');
+ if(b){e.preventDefault();syncOne(b.dataset.jan,b);}});
+$('#syncall').onclick=async()=>{
+ if(!curProj)return;
+ const btn=$('#syncall');btn.classList.add('busy');btn.textContent='Đang đồng bộ…';
+ try{const r=await(await fjson('/jan-sync',{method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({notes:[],project:curProj})})).json();
+  toast(`Đồng bộ ${projName()}: mới ${(r.synced||[]).length}, `+
+   `bỏ qua ${(r.skipped||[]).length}, lỗi ${(r.failed||[]).length}`,!(r.failed||[]).length);}
+ catch(e){toast('Đồng bộ lỗi — server có chạy không?');}
+ btn.classList.remove('busy');btn.textContent='Đồng bộ tất cả';
+ loadJan(true);};
+async function autoJan(note){ /* gọi khi 1 job OCR xong */
+ if(!curProj||!note)return;
+ try{const r=await(await fjson('/jan-sync',{method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({notes:[note],project:curProj})})).json();
+  const res=(r.results||[])[0];
+  if(res&&res.ok&&!res.skipped)
+   toast(`Tự động vào ${projName()}: ${note} (${res.chunks} chunks)`,true);
+  else if(res&&res.ok)toast(`${note} đã có trong ${projName()}`,true);
+  loadJan(true);}catch(e){}}
+
 /* ---------- notes / library ---------- */
 let notesSig='',filterF='all';
 document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{
@@ -648,7 +796,11 @@ function renderNotes(ns){
   <span class="ftag">${n.folder}</span>
   <span class="nname"><a data-note="${esc(n.name)}" title="Xem trước">${esc(n.name)}</a></span>
   <span class="ninfo">${n.mtime} · ${n.kb} KB</span>
-  <span class="acts"><a data-note="${esc(n.name)}">Xem</a>
+  <span class="acts">
+   <a class="jb ${janByName[n.name]!==undefined?'on':''}" data-jan="${esc(n.name)}"
+     title="${janByName[n.name]!==undefined?'Đã index trong '+esc(projName()):'Đưa vào '+esc(projName())}">
+    ${janByName[n.name]!==undefined?'✓ Jan '+(janByName[n.name]>1?janByName[n.name]+'k':''):'→ Jan'}</a>
+   <a data-note="${esc(n.name)}">Xem</a>
    <a href="/download/${encodeURIComponent(n.name)}">Tải .md</a></span></div>`).join('');}
 
 /* ---------- preview panel ---------- */
@@ -665,9 +817,10 @@ function closePanel(){panel.classList.remove('open');scrim.classList.remove('on'
 $('#px').onclick=closePanel;scrim.onclick=closePanel;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
 
-function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('on');
+function toast(msg,ok){const t=$('#toast');t.textContent=msg;
+ t.classList.toggle('ok',!!ok);t.classList.add('on');
  setTimeout(()=>t.classList.remove('on'),3200);}
-loadNotes();setInterval(loadNotes,8000);
+loadProjects();loadNotes();setInterval(loadNotes,8000);
 </script></body></html>"""
 
 
