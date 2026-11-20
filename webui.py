@@ -31,7 +31,7 @@ import time
 import uuid
 
 import jan_sync
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import Request, FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 import uvicorn
 
@@ -1140,6 +1140,13 @@ function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  setTimeout(()=>t.classList.remove('on'),3200);}
 restoreLangs();paintThemeBtn();migrateProjStore();loadProjects();loadNotes();setInterval(loadNotes,8000);
 </script></body></html>"""
+
+
+@app.middleware("http")
+async def no_store_cache(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
 
 
 @app.get("/", response_class=HTMLResponse)
