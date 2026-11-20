@@ -88,3 +88,13 @@ text.split("\\n\\n")   # ['đoạn một\n\nđoạn hai'], không tách được
 - Với MCP stdio, stdout là giao thức. Mọi log đi qua stderr.
 - Sau khi sửa file bằng heredoc hoặc script, grep lại escape.
 - Nên có một bộ query eval nhỏ để calibrate ngưỡng thay vì đoán.
+
+# Cập nhật (cùng ngày, sau khi test thật trên Jan)
+
+Quyết định "chỉ chờ embed server khi keyword không có kết quả" đã **sai** và bị revert ở commit `8047fcd`:
+
+- Câu hỏi tiếng Việt dài gần như **luôn** có keyword hit rác (âm tiết phổ biến như "của", "các", "kinh tế" khớp substring khắp nơi). Vì vậy điều kiện "keyword có kết quả" gần như luôn đúng, nên semantic bị bỏ qua đúng vào lần cần nó nhất. Thực tế: query về "di chuyển… săn bắt… di cư" trả về Nowcasting 11/23 từ, thay vì IELTS 10 trang 66 (score 0.854).
+- Fix: luôn chờ server. MCP server **prewarm** bge-m3 lúc khởi động (`_ensure_embed_server(wait=False)` trong `main()`), nên cold start chỉ còn khoảng 6s. Cách "eager start" bị loại ở trên hoá ra lại là cách đúng.
+- Lỗi đi kèm: model nhỏ bịa tên file (`search_pdf("document.pdf", …)`). Fix: `search_pdf` gặp `FileNotFoundError` thì tự fallback sang `search_notes`, thay vì trả lỗi để model đi lạc.
+
+Bài học: một heuristic về "tín hiệu đủ mạnh" (có keyword hit) phải được kiểm bằng dữ liệu thật của ngôn ngữ mục tiêu. Với tiếng Việt (âm tiết ngắn, lặp nhiều), số lượng hit gần như không mang thông tin.
