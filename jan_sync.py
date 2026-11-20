@@ -301,6 +301,23 @@ def sync_note(db: str, note_path: str, force: bool = False) -> dict:
         con.close()
 
 
+def remove_note(db: str, note_path: str) -> bool:
+    """Drop one note (by absolute path) from a project index."""
+    note_path = os.path.abspath(note_path)
+    con = _conn(db)
+    try:
+        row = con.execute("SELECT id FROM files WHERE path=?",
+                          (note_path,)).fetchone()
+        if not row:
+            return False
+        with con:
+            con.execute("DELETE FROM chunks WHERE file_id=?", (row[0],))
+            con.execute("DELETE FROM files WHERE id=?", (row[0],))
+        return True
+    finally:
+        con.close()
+
+
 def prune_missing(db: str, vault_root: str) -> list[str]:
     """Remove index entries for VAULT notes that no longer exist (deleted or
     moved). Files outside the vault (added via Jan itself) are untouched."""

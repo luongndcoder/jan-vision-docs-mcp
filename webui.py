@@ -7,7 +7,7 @@ Binds 127.0.0.1 only — no LAN exposure, no auth. Serves:
   POST /upload       — multipart upload (pdf/docx/md/txt/images), queued
   GET  /jobs        — JSON status of every job (pending/running/done/failed)
   GET  /notes       — JSON list of vault notes (Inbox + Notes)
-  GET  /note/<name>  — preview a note as text (HTML-escaped)
+  GET  /note/<name>  — preview a note as raw text (client escapes)
   GET  /download/<name> — download a .md note
   GET  /meta        — {"build": ...} for hot-reload detection
   GET  /healthz     — "ok"
@@ -23,6 +23,7 @@ Env:  PDF_OCR_VAULT (vault root, default ~/Documents/Vault)
 from __future__ import annotations
 
 import html
+import shutil
 import json
 import os
 import queue
@@ -179,8 +180,41 @@ def _note_path(name: str) -> str:
 @app.get("/note/{name}")
 def note(name: str):
     fp = _note_path(name)
-    txt = html.escape(open(fp, encoding="utf-8", errors="replace").read())
+    txt = open(fp, encoding="utf-8", errors="replace").read()
     return PlainTextResponse(txt, media_type="text/plain; charset=utf-8")
+
+
+def _to_trash(path: str) -> str:
+    """Move a file/folder to ~/.Trash (recoverable in Finder)."""
+    base = os.path.basename(path.rstrip("/"))
+    dst = os.path.expanduser(f"~/.Trash/{base}")
+    i = 1
+    while os.path.exists(dst):
+        stem, ext = os.path.splitext(base)
+        dst = os.path.expanduser(f"~/.Trash/{stem} {i}{ext}")
+        i += 1
+    shutil.move(path, dst)
+    return dst
+
+
+@app.post("/note-delete")
+def note_delete(body: dict):
+    """Xoá note khỏi thư viện: chuyển .md (+ ảnh đính kèm) vào Thùng rác và
+    gỡ khỏi mọi Jan project để Jan không còn trích dẫn nội dung đã xoá."""
+    fp = _note_path(body.get("name") or "")
+    removed_from = []
+    for p in jan_sync.list_projects():
+        try:
+            if jan_sync.remove_note(p["db"], fp):
+                removed_from.append(p["name"])
+        except Exception:  # noqa BLE001 — DB project lỗi không chặn việc xoá note
+            pass
+    trashed = _to_trash(fp)
+    stem = os.path.splitext(os.path.basename(fp))[0]
+    att = os.path.join(VAULT, "Attachments", stem)
+    if os.path.isdir(att):
+        _to_trash(att)
+    return {"ok": True, "trashed": trashed, "jan_projects": removed_from}
 
 
 @app.get("/download/{name}")
@@ -268,6 +302,19 @@ def jan_sync_ep(body: dict):
     return {"projects": per}
 
 
+@app.post("/jan-unsync")
+def jan_unsync_ep(body: dict):
+    """Gỡ note khỏi các Jan project (note vẫn ở lại thư viện/vault)."""
+    name = body.get("note") or ""
+    fp = _note_path(name)
+    pids = set(body.get("projects") or [])
+    removed = []
+    for p in jan_sync.list_projects():
+        if p["id"] in pids and jan_sync.remove_note(p["db"], fp):
+            removed.append(p["name"])
+    return {"ok": True, "removed_from": removed}
+
+
 @app.post("/jan-purge")
 def jan_purge_ep(body: dict):
     """Xoá file DB của project ĐÃ XOÁ trong Jan (chuyển vào ~/.Trash)."""
@@ -290,8 +337,7 @@ PAGE = """<!doctype html><html lang="vi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vision Docs</title>
 <link rel="icon" href="""" + _FAVICON + """">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="/fonts/fonts.css" rel="stylesheet">
 <style>
 :root{
   color-scheme:dark;
@@ -326,7 +372,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;z-
 
 /* ---------- layout: sidebar + main ---------- */
 #shell{display:grid;grid-template-columns:236px 1fr;min-height:100dvh}
-aside{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;
+#shell>aside{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;
   gap:6px;padding:18px 14px;border-right:1px solid var(--line);
   background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(10px);z-index:4}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15.5px;
@@ -352,7 +398,7 @@ aside{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;
 .nav.on .nbadge{color:var(--accent)}
 .sidefoot{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding:12px 10px 2px;
   border-top:1px solid var(--line)}
-.vault{font:400 10.5px/1.5 var(--mono);color:var(--faint);word-break:break-all}
+.vault{font:400 10.5px/1.5 var(--mono);color:var(--faint);overflow-wrap:anywhere}
 .srv{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none;
   box-shadow:0 0 8px #4fb07188;animation:breathe 2.4s ease-in-out infinite}
@@ -426,14 +472,23 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .empty-q{padding:26px 20px;text-align:center;color:var(--faint);font-size:13px}
 
 /* ---------- library ---------- */
-.chips{display:flex;gap:7px}
-.chip{font:500 12px var(--sans);color:var(--muted);cursor:pointer;
-  background:none;border:1px solid var(--line);padding:6px 13px;border-radius:999px;
-  transition:color .18s,border-color .18s,background .18s}
+.chips{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.nq{font:400 13px var(--sans);color:var(--text);background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;padding:7px 12px;width:200px;outline:none;height:34px}
+.nq:focus{border-color:var(--line-strong)}
+.seg{display:inline-flex;gap:2px;padding:3px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--line)}
+.chip{font:500 12.5px var(--sans);color:var(--muted);cursor:pointer;
+  background:none;border:0;padding:5px 12px;border-radius:7px;
+  display:inline-flex;align-items:center;gap:6px;
+  transition:color .18s,background .18s,box-shadow .18s}
 .chip:hover{color:var(--text)}
-.chip.on{color:var(--text);border-color:#e08a5c44;background:#e08a5c10}
+.chip.on{color:var(--text);background:var(--panel);
+  box-shadow:0 1px 2px #0000001a,0 0 0 1px var(--line)}
+.cnt{font:500 10.5px var(--mono);color:var(--faint)}
+.cnt:empty{display:none}
 #notes{margin-top:16px;display:grid;gap:8px}
-.nrow{display:grid;grid-template-columns:auto 1fr 2fr auto;gap:14px;align-items:center;
+.nrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;
   padding:13px 16px;border-radius:12px;background:var(--panel);
   border:1px solid transparent;transition:border-color .2s;
   animation:enter2 .4s ease both}
@@ -446,7 +501,17 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .nname a:hover{color:var(--accent)}
 .ninfo{font:400 12px var(--mono);color:var(--muted);text-align:right;
   font-variant-numeric:tabular-nums}
-.acts{display:flex;gap:8px;justify-content:flex-end}
+.acts{display:flex;gap:4px;justify-content:flex-end;align-items:center}
+.acts .ib{width:32px;height:32px;padding:0;justify-content:center;border-color:transparent;
+  border-radius:8px;color:var(--faint)}
+.acts .ib:hover{background:var(--panel2);border-color:var(--line);color:var(--text)}
+.acts .ib svg{width:15px;height:15px}
+.acts .ib.del:hover{color:var(--err);border-color:color-mix(in srgb,var(--err) 35%,transparent);
+ background:color-mix(in srgb,var(--err) 8%,transparent)}
+.acts .ib.del.arm{width:auto;padding:0 10px;color:#fff;background:var(--err);border-color:var(--err);
+ font:600 12px var(--sans)}
+.acts .ib.del.arm svg{display:none}
+.acts .ib.del.busy{opacity:.5;pointer-events:none}
 .acts a,.acts button,.btn2,.jb{display:inline-flex;align-items:center;gap:6px}
 .acts a,.acts button{font:500 13px var(--sans);color:var(--muted);cursor:pointer;
   text-decoration:none;background:none;border:1px solid var(--line);
@@ -461,14 +526,18 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 #panel{position:fixed;top:0;right:0;bottom:0;width:min(560px,94vw);z-index:20;
   background:var(--panel);border-left:1px solid var(--line);
   transform:translateX(102%);transition:transform .28s cubic-bezier(.2,.8,.25,1);
-  display:flex;flex-direction:column;box-shadow:-30px 0 70px -40px #000000d9}
-#panel.open{transform:none}
+  display:flex;flex-direction:column;box-shadow:none;visibility:hidden;
+  transition:transform .28s cubic-bezier(.2,.8,.25,1),visibility 0s .28s}
+#panel.open{transform:none;visibility:visible;transition-delay:0s;
+  box-shadow:-30px 0 70px -40px #000000d9}
 .pheadp{display:flex;align-items:center;gap:12px;padding:15px 20px;
   border-bottom:1px solid var(--line)}
 .pheadp .t{font-weight:600;font-size:14.5px;flex:1;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .pbody{flex:1;overflow:auto;padding:18px 20px;margin:0}
 .pbody{font:400 13.5px/1.8 var(--sans);color:var(--text)}
+#pview{overflow-wrap:anywhere}
+#praw{white-space:pre-wrap;overflow-wrap:anywhere}
 .pbody p{margin:0 0 13px}
 .pbody h2{font:700 17px/1.4 var(--sans);margin:20px 0 10px;padding-bottom:6px;
   border-bottom:1px solid var(--line)}
@@ -510,10 +579,10 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .toast.on{transform:translate(-50%,0)}
 
 /* ---------- sticky header thư viện + load more ---------- */
-.stickybar{position:sticky;top:0;z-index:9;margin:-14px 0 6px;padding:14px 0 0;
- background:linear-gradient(to bottom,
-   color-mix(in srgb,var(--bg) 94%,transparent) 0%,
-   color-mix(in srgb,var(--bg) 88%,transparent) 74%,transparent 100%);}
+.stickybar{position:sticky;top:0;z-index:9;margin:-14px 0 6px;padding:14px 0 2px;
+ background:var(--bg)}
+.stickybar::after{content:"";position:absolute;left:0;right:0;top:100%;height:14px;
+ pointer-events:none;background:linear-gradient(to bottom,var(--bg),transparent)}
 .lmore{display:flex;justify-content:center;padding:6px 0 2px}
 
 /* ---------- custom project dropdown ---------- */
@@ -535,14 +604,14 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .projdd.open .projpop{opacity:1;transform:none;pointer-events:auto}
 .prow{display:flex;align-items:center;gap:10px;padding:8px 9px;border-radius:8px;
  cursor:pointer;color:var(--muted);transition:background .13s,color .13s}
-.prow:hover{background:#ffffff07;color:var(--text)}
+.prow:hover{background:color-mix(in srgb,var(--text) 5%,transparent);color:var(--text)}
 .pchk{width:17px;height:17px;border-radius:5px;border:1px solid var(--line);
  display:grid;place-items:center;font-size:11px;flex:none;color:transparent;
  transition:background .14s,border-color .14s,color .14s}
 .prow.on .pchk{background:var(--accent-dim);border-color:var(--accent);color:#fff}
 .prow.on .pname{color:var(--text)}
 .pname{font-weight:500;font-size:13.5px}
-.pmeta{margin-left:auto;font:400 10.5px var(--mono);color:var(--faint)}
+.pjmeta{margin-left:auto;padding-left:14px;font:400 11px var(--mono);color:var(--faint);white-space:nowrap}
 .pempty{padding:11px 12px;color:var(--faint);font-size:13px}
 
 .psep{height:1px;background:var(--line);margin:6px 4px}
@@ -582,12 +651,24 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .btn2:hover{color:var(--text);border-color:var(--line-strong)}
 .btn2:active{transform:translateY(1px)}
 .btn2.busy{opacity:.4;pointer-events:none}
-.jb{font:500 11.5px var(--mono);color:var(--faint);border:1px solid var(--line);.jb{display:inline-flex;align-items:center;gap:5px;
- padding:5px 9px;border-radius:7px;cursor:pointer;text-decoration:none;
- transition:color .18s,border-color .18s;white-space:nowrap}
-.jb:hover{color:var(--text);border-color:var(--line-strong)}
-.jb.on{color:var(--ok);border-color:#4fb07133}
-.jb.busy{opacity:.4;pointer-events:none}
+.acts .jb{display:inline-flex;align-items:center;gap:7px;margin-right:6px;
+ font:500 12.5px var(--sans);color:var(--muted);border:1px dashed var(--line-strong);
+ padding:5px 11px;border-radius:999px;cursor:pointer;text-decoration:none;
+ transition:color .18s,border-color .18s,background .18s;white-space:nowrap}
+.acts .jb:hover{color:var(--text);border-style:solid}
+.jb .jd{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.55}
+.acts .jb.on{color:var(--ok);border:1px solid transparent;
+ background:color-mix(in srgb,var(--ok) 11%,transparent)}
+.jb.on .jd{opacity:1}
+.acts .jb.arm{color:#fff;background:var(--err);border:1px solid var(--err)}
+.acts .jb.part{color:var(--accent);border:1px solid transparent;
+ background:color-mix(in srgb,var(--accent) 11%,transparent)}
+.acts .jb.busy{pointer-events:none;color:var(--accent);border:1px solid transparent;
+ background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.jspin{width:10px;height:10px;flex:none;border-radius:50%;border:1.6px solid currentColor;
+ border-right-color:transparent;animation:jspin .7s linear infinite}
+@keyframes jspin{to{transform:rotate(360deg)}}
+.btn2.busy .jspin{margin-right:7px;vertical-align:-1px;display:inline-block}
 .jb.okpop{animation:pop .4s ease}
 .toast.ok{border-color:#4fb07144;color:var(--ok)}
 /* icon theme được JS swap trong nút #themebtn */
@@ -596,16 +677,25 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 [data-theme="light"] ::selection{background:#c0673533}
 
 @media (max-width:860px){
-  #shell{grid-template-columns:1fr}
-  aside{position:static;height:auto;flex-direction:row;align-items:center;
+  #shell{grid-template-columns:minmax(0,1fr)}
+  #shell>aside{overflow-x:auto;scrollbar-width:none}
+  #shell>aside .nav{padding:8px 10px;gap:7px}
+  #shell>aside{position:static;height:auto;flex-direction:row;align-items:center;
     padding:12px 16px;border-right:0;border-bottom:1px solid var(--line);gap:4px}
   .brand{padding:0 14px 0 0}
   .navlbl,.sidefoot .vault{display:none}
   .nav{width:auto;padding:9px 12px}
   .sidefoot{margin:0 0 0 auto;border:0;padding:0;flex-direction:row}
-  main{padding:24px 18px 70px}
-  .nrow{grid-template-columns:1fr auto;row-gap:8px}
-  .ninfo{grid-column:1;text-align:left}
+  main{padding:24px 16px 70px}
+  .brand{font-size:0;gap:0}            /* chỉ giữ logo */
+  .nav{white-space:nowrap}
+  .srvt{display:none}
+  .nrow{grid-template-columns:auto minmax(0,1fr);row-gap:8px;padding:12px}
+  .ninfo{grid-column:1/-1;text-align:left}
+  .acts{grid-column:1/-1;justify-content:flex-start;flex-wrap:wrap}
+  .chips{width:100%}
+  .nq{flex:1 1 100%;width:auto}
+  #janinfo{flex-basis:100%}
 }
 </style></head><body>
 <div id="jsbadge" style="position:fixed;bottom:8px;right:10px;z-index:50;font:600 10.5px/1 var(--sans);color:#8f99a5;padding:6px 9px;border-radius:8px;background:var(--panel);border:1px solid var(--line);opacity:0;transition:opacity .4s">JS</div>
@@ -631,11 +721,11 @@ document.documentElement.dataset.theme=
     Thư viện <span class="nbadge" id="navCount">—</span></button>
   <div class="sidefoot">
     <div style="display:flex;align-items:center;gap:10px">
-      <span class="srv"><span class="dot"></span> server đang chạy</span>
+      <span class="srv" title="server đang chạy"><span class="dot"></span> <span class="srvt">server đang chạy</span></span>
       <button class="xbtn" id="themebtn" aria-label="Chuyển sáng/tối"
         title="Sáng / tối" style="width:26px;height:26px"></button>
     </div>
-    <div class="vault" title=\"""" + html.escape(VAULT) + """">""" + html.escape(VAULT) + """</div>
+    <div class="vault" title=\"""" + html.escape(VAULT) + """">""" + html.escape(VAULT.replace(os.path.expanduser("~"), "~", 1)) + """</div>
   </div>
 </aside>
 
@@ -691,9 +781,12 @@ document.documentElement.dataset.theme=
     <div class="vhead vrow">
       <div><h1>Thư viện</h1><p id="libsub">—</p></div>
       <div class="chips">
-        <button class="chip on" data-f="all">Tất cả</button>
-        <button class="chip" data-f="Inbox">Inbox</button>
-        <button class="chip" data-f="Notes">Notes</button>
+        <input type="search" id="nq" class="nq" placeholder="Tìm note…" aria-label="Tìm note theo tên" autocomplete="off">
+        <div class="seg" role="tablist" aria-label="Lọc theo thư mục">
+          <button class="chip on" data-f="all" role="tab">Tất cả <span class="cnt" data-c="all"></span></button>
+          <button class="chip" data-f="Inbox" role="tab">Inbox <span class="cnt" data-c="Inbox"></span></button>
+          <button class="chip" data-f="Notes" role="tab">Notes <span class="cnt" data-c="Notes"></span></button>
+        </div>
       </div>
     </div>
     <div class="projbar" id="projwrap">
@@ -947,12 +1040,12 @@ function renderProjPop(){
  const row=p=>`<div class="prow ${selProjs.has(p.id)?'on':''}" data-p="${p.id}"
    role="option" aria-selected="${selProjs.has(p.id)}">
    <span class="pchk">\u2713</span><span class="pname">${esc(p.name)}</span>
-   <span class="pmeta">${p.files} file \u00b7 ${p.chunks} chunks</span></div>`;
+   <span class="pjmeta">${p.files?p.files+' file \u00b7 '+p.chunks+' chunks':'tr\u1ed1ng'}</span></div>`;
  const drow=d=>`<div class="prow dead">
    <span class="pchk"></span>
    <span style="min-width:0"><span class="pname">${esc(d.name)}</span>
      <div class="pshort">${d.db.split('/').pop()}</div></span>
-   <span class="pmeta">${d.files} file \u00b7 ${d.chunks>999?
+   <span class="pjmeta">${d.files} file \u00b7 ${d.chunks>999?
      (d.chunks/1000).toFixed(1)+'k':d.chunks} chunks</span>
    <button class="ppurge" data-purge="${d.id}"
      title="Chuyển file DB vào Trash — hoàn tác được">Xoá file</button></div>`;
@@ -994,9 +1087,13 @@ async function loadProjects(){
  if(!projList.length){$('#projwrap').style.display='none';renderNotes(lastNotes);return;}
  const ids=new Set(projList.filter(p=>p.alive).map(p=>p.id));
  selProjs=new Set([...selProjs].filter(id=>ids.has(id)));
+ let neverChose=true;try{neverChose=localStorage.getItem('vd.projs')===null}catch(e){}
+ if(!selProjs.size&&neverChose&&ids.size===1){selProjs=new Set(ids);
+  try{localStorage.setItem('vd.projs',JSON.stringify([...ids]))}catch(e){}}
  renderProjPop();projBtnText();loadJan();}
 $('#projbtn').onclick=e=>{e.stopPropagation();
- showPop(!$('#projdd').classList.contains('open'))};
+ const willOpen=!$('#projdd').classList.contains('open');
+ showPop(willOpen);if(willOpen)loadProjects();};
 document.addEventListener('click',e=>{
  if(!e.target.closest('#projdd'))showPop(false)});
 function noteState(name){
@@ -1020,9 +1117,11 @@ async function loadJan(force){
   (selProjs.size>1?` \u00b7 ${selProjs.size} project`:'');
  const sig=JSON.stringify([janByProject,[...selProjs].sort(),lastNotes.map(n=>n.name)]);
  if(sig!==janSig||force){janSig=sig;renderNotes(lastNotes);}}
+const syncing=new Map();  /* note -> nhãn đang chạy */  /* note đang đồng bộ — sống qua các lần render lại */
 async function syncOne(name,btn){
  if(!selProjs.size){toast('Ch\u1ecdn Jan project tr\u01b0\u1edbc \u0111\u00e3.');return;}
- if(btn)btn.classList.add('busy');
+ if(syncing.has(name))return;
+ syncing.set(name,'Đang đồng bộ…');renderNotes(lastNotes);
  let tot=0,ok=0,names=[],err='';
  try{const r=await(await fjson('/jan-sync',{method:'POST',
    headers:{'Content-Type':'application/json'},
@@ -1033,20 +1132,53 @@ async function syncOne(name,btn){
    if(res&&res.ok){ok++;names.push(pp.name);tot+=res.skipped?0:res.chunks;}
    else err=(res&&res.error)||err||'l\u1ed7i';});
  }catch(e){err='kh\u00f4ng k\u1ebft n\u1ed1i \u0111\u01b0\u1ee3c server';}
- if(btn)btn.classList.remove('busy');
+ syncing.delete(name);
  if(ok)toast(`${names.join(', ')} \u2190 ${name}${tot?` (${tot} chunks)`:''}`,true);
  else toast(err);
  loadJan(true);}
-document.addEventListener('click',e=>{const b=e.target.closest('[data-jan]');
- if(b){e.preventDefault();syncOne(b.dataset.jan,b);}});
+/* xoá note: bấm 1 lần -> "Xoá?" (3s), bấm lần 2 mới xoá (vào Thùng rác) */
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-del]');
+ if(!b)return;e.preventDefault();const name=b.dataset.del;
+ if(!b.classList.contains('arm')){
+  document.querySelectorAll('.ib.del.arm').forEach(x=>{x.classList.remove('arm');x.textContent='';x.innerHTML=x.dataset.icon||x.innerHTML});
+  b.dataset.icon=b.innerHTML;b.classList.add('arm');b.textContent='Xoá?';
+  setTimeout(()=>{if(b.isConnected&&b.classList.contains('arm')){b.classList.remove('arm');b.innerHTML=b.dataset.icon;}},3000);
+  return;}
+ b.classList.remove('arm');b.classList.add('busy');b.textContent='…';
+ try{const r=await(await fjson('/note-delete',{method:'POST',
+   headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+  if(r.ok){
+   if(($('#ptitle')||{}).textContent===name.slice(0,-3))closePanel();
+   toast(`Đã chuyển ${name} vào Thùng rác`+(r.jan_projects&&r.jan_projects.length?` · gỡ khỏi Jan: ${r.jan_projects.join(', ')}`:'')+' — khôi phục được trong Finder',true);
+   lastNotes=lastNotes.filter(n=>n.name!==name);notesSig='';renderNotes(lastNotes);loadNotes();loadJan(true);}
+  else{toast(r.detail||r.error||'Không xoá được');b.classList.remove('busy');b.innerHTML=b.dataset.icon;}
+ }catch(err){toast('Không xoá được — server có chạy không?');b.classList.remove('busy');b.innerHTML=b.dataset.icon;}});
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-jan]');
+ if(!b)return;e.preventDefault();const name=b.dataset.jan;
+ if(!(b.classList.contains('on')||b.classList.contains('part'))){syncOne(name,b);return;}
+ /* đã trong Jan: bấm 1 lần -> "Gỡ khỏi Jan?" (3s), bấm lần 2 mới gỡ */
+ if(!b.classList.contains('arm')){
+  b.dataset.html=b.innerHTML;b.classList.add('arm');b.textContent='Gỡ khỏi Jan?';
+  setTimeout(()=>{if(b.isConnected&&b.classList.contains('arm')){b.classList.remove('arm');b.innerHTML=b.dataset.html;}},3000);
+  return;}
+ b.classList.remove('arm');syncing.set(name,'Đang gỡ…');renderNotes(lastNotes);
+ try{const r=await(await fjson('/jan-unsync',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({note:name,projects:[...selProjs]})})).json();
+  if(r.ok)toast(`Đã gỡ ${name} khỏi Jan`+(r.removed_from&&r.removed_from.length?`: ${r.removed_from.join(', ')}`:'')+' — note vẫn ở trong thư viện',true);
+  else toast(r.detail||r.error||'Không gỡ được');
+ }catch(err){toast('Không gỡ được — server có chạy không?');}
+ finally{syncing.delete(name);loadJan(true);}});
 $('#syncall').onclick=async()=>{
  if(!selProjs.size){toast('Ch\u1ecdn Jan project tr\u01b0\u1edbc \u0111\u00e3.');return;}
- const btn=$('#syncall');btn.classList.add('busy');btn.textContent='\u0110ang \u0111\u1ed3ng b\u1ed9\u2026';
+ const btn=$('#syncall');btn.classList.add('busy');
+ btn.innerHTML='<span class="jspin"></span>Đang đồng bộ…';
+ const batch=lastNotes.map(n=>n.name);batch.forEach(n=>syncing.set(n,'Đang đồng bộ…'));renderNotes(lastNotes);
  let parts=[],anyFail=false;
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({notes:[],projects:[...selProjs]})},900000)).json();
-  if(r.error){toast(r.error);return;}
+  if(r.error){toast(r.error);anyFail=true;}
   Object.values(r.projects||{}).forEach(pp=>{
    const s=pp.summary||{};
    if(s.error){parts.push(`${pp.name}: ${s.error}`);anyFail=true;return;}
@@ -1054,22 +1186,26 @@ $('#syncall').onclick=async()=>{
    parts.push(`${pp.name}: m\u1edbi ${(s.synced||[]).length}, b\u1ecf qua ${(s.skipped||[]).length}`+
     (rm?`, dọn ${rm} note đã xoá/di chuyển`:''));
    if((s.failed||[]).length)anyFail=true;});
-  toast(parts.join(' \u00b7 '),!anyFail);
+  if(parts.length)toast(parts.join(' \u00b7 '),!anyFail);
  }catch(e){toast('\u0110\u1ed3ng b\u1ed9 l\u1ed7i \u2014 server c\u00f3 ch\u1ea1y kh\u00f4ng?');}
+ batch.forEach(n=>syncing.delete(n));
  btn.classList.remove('busy');btn.textContent='\u0110\u1ed3ng b\u1ed9 t\u1ea5t c\u1ea3';
  loadJan(true);};
 async function autoJan(note){
- if(!selProjs.size||!note)return;
+ if(!selProjs.size||!note||syncing.has(note))return;
+ syncing.set(note,'Đang đồng bộ…');renderNotes(lastNotes);
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({notes:[note],projects:[...selProjs]})},900000)).json();
-  if(r.error){toast('Không tự đồng bộ được vào Jan: '+r.error);loadEmbed();return;}
+  if(r.error){toast('Không tự đồng bộ được vào Jan: '+r.error);loadEmbed();}
+  else{
   const bad=[];const names=[];
   Object.values(r.projects||{}).forEach(pp=>{const res=(pp.results||[])[0];
    if(res&&res.ok)names.push(pp.name);else bad.push(pp.name+': '+((res&&res.error)||'lỗi'));});
   if(bad.length)toast('Tự đồng bộ lỗi — '+bad.join(' · '));
-  else if(names.length)toast(`T\u1ef1 \u0111\u1ed9ng v\u00e0o ${names.join(', ')}: ${note}`,true);
-  loadJan(true);}catch(e){toast('Tự đồng bộ vào Jan lỗi — server có chạy không?');}}
+  else if(names.length)toast(`T\u1ef1 \u0111\u1ed9ng v\u00e0o ${names.join(', ')}: ${note}`,true);}
+  }catch(e){toast('Tự đồng bộ vào Jan lỗi — server có chạy không?');}
+ finally{syncing.delete(note);loadJan(true);}}
 
 /* ---------- notes / library ---------- */
 let notesSig='',filterF='all';
@@ -1090,31 +1226,37 @@ async function loadNotes(){
  renderNotes(ns);}
 let noteLimit=25;
 function renderNotes(ns){
- ns=ns.filter(n=>filterF==='all'||n.folder===filterF);
+ const cnt={all:ns.length,Inbox:0,Notes:0};ns.forEach(n=>{if(n.folder in cnt)cnt[n.folder]++});
+ document.querySelectorAll('.cnt').forEach(c=>c.textContent=cnt[c.dataset.c]||'');
+ const nq=(($('#nq')||{}).value||'').trim().toLowerCase();
+ ns=ns.filter(n=>(filterF==='all'||n.folder===filterF)&&(!nq||n.name.toLowerCase().includes(nq)));
  const total=ns.length;
  ns=ns.slice(0,noteLimit);
  const ST=ns.map(n=>{const s=noteState(n.name);
-  return {...s,cls:s.n===0?'':'on',
-   txt:s.n===0?(selProjs.size?'→ Jan':'Jan')
-    :(s.k===s.n?'✓ Jan':(s.k>0?`◐ ${s.k}/${s.n}`:'→ Jan'))};});
+  if(syncing.has(n.name))return {...s,cls:'busy',busy:true,txt:syncing.get(n.name)};
+  const cls=s.n===0||s.k===0?'':(s.k===s.n?'on':'part');
+  return {...s,cls,
+   txt:s.n===0?'Chọn project':(s.k===s.n?'Trong Jan':(s.k>0?`Jan ${s.k}/${s.n}`:'Đưa vào Jan'))};});
  if(!ns.length&&!total){$('#notes').innerHTML=`<div class="empty">
   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#8f99a5"
    stroke-width="1.5"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
   <div>${
-  filterF==='all'?'Vault còn trống':'Chưa có note trong '+(filterF==='Inbox'?'Inbox':'Notes')}</div></div>`;return;}
+  nq?'Không có note nào khớp “'+esc(nq)+'”':filterF==='all'?'Vault còn trống':'Chưa có note trong '+(filterF==='Inbox'?'Inbox':'Notes')}</div></div>`;return;}
  $('#notes').innerHTML=ns.map((n,i)=>{const st=ST[i];return `<div class="nrow" style="animation-delay:${Math.min(i,12)*30}ms">
   <span class="ftag">${n.folder}</span>
-  <span class="nname"><a data-note="${esc(n.name)}" title="Xem trước">${esc(n.name)}</a></span>
+  <span class="nname"><a data-note="${esc(n.name)}" title="${esc(n.name)} — bấm để xem trước">${esc(n.name)}</a></span>
   <span class="ninfo">${n.mtime} · ${n.kb} KB</span>
   <span class="acts">
    <a class="jb ${st.cls}" data-jan="${esc(n.name)}"
-     title="${selProjs.size?('Đồng bộ vào '+selProjs.size+' project đang chọn'):'Chọn Jan project ở trên'}">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h18l-1.4 11.2a2 2 0 0 1-2 1.8H6.4a2 2 0 0 1-2-1.8L3 8z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg>${st.txt}</a>
-   <a data-note="${esc(n.name)}" title="Xem trước note">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>Xem</a>
-   <a href="/download/${encodeURIComponent(n.name)}" title="Tải file .md">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 20h16"/></svg>Tải .md</a></span></div>`}).join('')
+     title="${selProjs.size?((st.cls==='on'||st.cls==='part')?'Đã có trong Jan — bấm để gỡ khỏi Jan (note vẫn giữ trong thư viện)':'Đồng bộ vào '+selProjs.size+' project đang chọn'):'Chọn Jan project ở trên'}">${st.busy?'<span class="jspin"></span>':'<span class="jd"></span>'}${st.txt}</a>
+   <a class="ib" data-note="${esc(n.name)}" title="Xem trước" aria-label="Xem trước ${esc(n.name)}">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg></a>
+   <a class="ib" href="/download/${encodeURIComponent(n.name)}" title="Tải file .md" aria-label="Tải ${esc(n.name)}">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 20h16"/></svg></a>
+   <button class="ib del" data-del="${esc(n.name)}" title="Xoá khỏi thư viện" aria-label="Xoá ${esc(n.name)}">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button></span></div>`}).join('')
   +(total>noteLimit?`<div class="lmore"><button class="btn2" id="loadmore">Tải thêm · còn ${total-noteLimit} note</button></div>`:'');}
+$('#nq').addEventListener('input',()=>renderNotes(lastNotes));
 document.addEventListener('click',e=>{if(e.target.closest('#loadmore')){
  noteLimit+=50;renderNotes(lastNotes);}});
 
@@ -1178,8 +1320,9 @@ function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  setTimeout(()=>t.classList.remove('on'),3200);}
 try{restoreLangs();paintThemeBtn();migrateProjStore();loadProjects();loadNotes();
  setInterval(loadNotes,8000);
+ setInterval(()=>{if(!document.hidden&&!$('#projdd').classList.contains('open'))loadProjects()},10000);
  const _b=$('#jsbadge');
- if(_b){_b.style.opacity='1';_b.textContent='✓ JS OK';_b.style.color='#3dab63';}
+ if(_b){_b.textContent='JS OK';}  /* chỉ hiện khi lỗi (xem __vderr) */
 }catch(e){
  const _b=$('#jsbadge');
  if(_b){_b.style.opacity='1';_b.textContent='JS lỗi: '+e.message;_b.style.color='#e05d4d';}
@@ -1187,10 +1330,23 @@ try{restoreLangs();paintThemeBtn();migrateProjStore();loadProjects();loadNotes()
 </script></body></html>"""
 
 
+FONT_DIR = os.path.join(HERE, "static", "fonts")
+
+
+@app.get("/fonts/{name}")
+def fonts(name: str):
+    """Font đóng gói sẵn trong repo — web UI chạy offline hoàn toàn."""
+    fp = os.path.join(FONT_DIR, os.path.basename(name))
+    if not (name.endswith((".woff2", ".css")) and os.path.isfile(fp)):
+        raise HTTPException(404)
+    return FileResponse(fp, headers={"Cache-Control": "max-age=86400"})
+
+
 @app.middleware("http")
 async def no_store_cache(request: Request, call_next):
     resp = await call_next(request)
-    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    if not request.url.path.startswith("/fonts/"):
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
     return resp
 
 
