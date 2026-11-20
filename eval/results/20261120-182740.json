@@ -1,0 +1,554 @@
+{
+ "summary": {
+  "n": 40,
+  "positives": 32,
+  "negatives": 8,
+  "hit@1": 0.96875,
+  "hit@3": 1.0,
+  "hit@6": 1.0,
+  "mrr@6": 0.9791666666666667,
+  "neg_pass": 0.25,
+  "neg_low": 0.375,
+  "neg_fail": 0.375,
+  "cold_s": 2.47,
+  "p50_s": 2.13,
+  "p95_s": 6.19,
+  "hit@1_by_type": {
+   "en_para": "5/6",
+   "exact": "5/5",
+   "keyword": "5/5",
+   "vi_native": "4/4",
+   "vi_para": "12/12"
+  }
+ },
+ "rows": [
+  {
+   "id": "q01",
+   "type": "vi_para",
+   "query": "Giờ ban ngày và ban đêm chỉ bằng nhau vào hai thời điểm nào trong năm, còn mùa hè thì giờ dài hay ngắn?",
+   "mode": "semantic",
+   "matches": 3,
+   "seconds": 2.47,
+   "top": [
+    "Cambridge IELTS 08.md#p17",
+    "Cambridge IELTS 08.md#p145",
+    "Cambridge IELTS 08.md#p18"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q02",
+   "type": "vi_para",
+   "query": "Các nhà nghiên cứu thừa nhận rò rỉ thông tin giác quan hoặc gian lận có thể gây kết quả dương tính giả, và bản tổng kết đến năm 1985 cho thấy 80% nghiên cứu có ý nghĩa thống kê",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 1.62,
+   "top": [
+    "Cambridge IELTS 08.md#p26",
+    "Cambridge IELTS 08.md#p26",
+    "Cambridge IELTS 08.md#p25"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q03",
+   "type": "vi_para",
+   "query": "Nhà máy thử nghiệm sản xuất kính phải chạy liên tục 14 tháng, mỗi tháng tốn 100.000 bảng mà chưa ra tấm kính nào dùng được",
+   "mode": "semantic",
+   "matches": 2,
+   "seconds": 2.08,
+   "top": [
+    "Cambridge IELTS 08.md#p41",
+    "Cambridge IELTS 08.md#p41"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q04",
+   "type": "vi_para",
+   "query": "Nhà khoa học cho rằng thiết bị dẫn sét có thể giúp ngăn mưa đá, vì tiếng sấm là tác nhân gây mưa xối xả",
+   "mode": "semantic",
+   "matches": 4,
+   "seconds": 2.32,
+   "top": [
+    "Cambridge IELTS 08.md#p65",
+    "Cambridge IELTS 08.md#p65",
+    "Cambridge IELTS 08.md#p64"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q05",
+   "type": "vi_para",
+   "query": "Những loài vật sống tiết kiệm năng lượng như cá sấu và rùa thì thọ hơn; chuột ăn theo chế độ nhịn đói có thể sống gấp đôi",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 1.35,
+   "top": [
+    "Cambridge IELTS 08.md#p75",
+    "Cambridge IELTS 08.md#p75",
+    "Cambridge IELTS 08.md#p74"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q06",
+   "type": "vi_para",
+   "query": "Mũi con người dù kém nhạy hơn nhiều loài động vật vẫn phân biệt được hàng nghìn mùi và phát hiện mùi ở lượng cực nhỏ",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.09,
+   "top": [
+    "Cambridge IELTS 08.md#p49",
+    "Cambridge IELTS 08.md#p49",
+    "Cambridge IELTS 08.md#p50"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q07",
+   "type": "vi_para",
+   "query": "Giếng bậc thang do một nữ hoàng xây cuối thế kỷ 11, bị phù sa lấp sau trận lũ thế kỷ 13, được cơ quan khảo cổ phục hồi từ thập niên 1960 và sống sót qua trận động đất năm 2001",
+   "mode": "semantic",
+   "matches": 5,
+   "seconds": 2.18,
+   "top": [
+    "Cambridge IELTS 10.md#p19",
+    "Cambridge IELTS 10.md#p19",
+    "Cambridge IELTS 10.md#p21"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q08",
+   "type": "vi_para",
+   "query": "Nhà sinh học phân tử nổi tiếng nói ông và người cộng sự giải mã được cấu trúc DNA vì họ biết mình không phải người thông minh nhất trong nhóm đối thủ",
+   "mode": "semantic",
+   "matches": 4,
+   "seconds": 1.99,
+   "top": [
+    "Cambridge IELTS 10.md#p27",
+    "Cambridge IELTS 10.md#p28",
+    "Cambridge IELTS 10.md#p127"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q09",
+   "type": "vi_para",
+   "query": "Giáo sư ở Cambridge cho rằng trà và bia, nhờ nước đun sôi và chất kháng khuẩn, giúp dân thành thị tránh được bệnh lỵ nên góp phần tạo ra cách mạng công nghiệp",
+   "mode": "semantic",
+   "matches": 5,
+   "seconds": 2.59,
+   "top": [
+    "Cambridge IELTS 10.md#p43",
+    "Cambridge IELTS 10.md#p43",
+    "Cambridge IELTS 10.md#p45"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q10",
+   "type": "vi_para",
+   "query": "Từ khi biên giới nội bộ bị bãi bỏ, châu Âu chuyển từ nền kinh tế tồn kho sang nền kinh tế dòng chảy, và một số ngành dùng nhiều nhân công được dời đi xa",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.78,
+   "top": [
+    "Cambridge IELTS 10.md#p23",
+    "Cambridge IELTS 10.md#p23",
+    "Cambridge IELTS 10.md#p66"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q11",
+   "type": "vi_para",
+   "query": "Giáo sư tâm lý học ở một đại học bang miền tây nam nước Mỹ cho rằng đổi mới bắt đầu từ khâu tuyển dụng: giá trị của nhân viên phải khớp với giá trị công ty",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.43,
+   "top": [
+    "Cambridge IELTS 10.md#p26",
+    "Cambridge IELTS 10.md#p26",
+    "Cambridge IELTS 10.md#p94"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q12",
+   "type": "vi_para",
+   "query": "Lời đề tặng của tác giả dành cho người cha là thầy dạy tiếng Anh của mình, và cho những người học ngoại ngữ muốn thông thạo",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 1.39,
+   "top": [
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p4",
+    "Cambridge IELTS 08.md#p125",
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p4"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q13",
+   "type": "en_para",
+   "query": "A lever mechanism resembling a vessel's hook, devised in 1670, let pendulum clocks swing through a narrow arc and led to tall freestanding cases",
+   "mode": "semantic",
+   "matches": 3,
+   "seconds": 2.26,
+   "top": [
+    "Cambridge IELTS 08.md#p18",
+    "Cambridge IELTS 08.md#p18",
+    "Cambridge IELTS 08.md#p20"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q14",
+   "type": "en_para",
+   "query": "Volunteers sat in a closed room with soft pink light over their eyes while someone tried to transmit a picture; random success would be one in four",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.26,
+   "top": [
+    "Cambridge IELTS 08.md#p25",
+    "Cambridge IELTS 08.md#p25",
+    "Cambridge IELTS 10.md#p126"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q15",
+   "type": "en_para",
+   "query": "Before weather stations existed, scientists rebuild past climates from annual growth bands in trees and frozen cores drilled at the poles",
+   "mode": "semantic-low",
+   "matches": 4,
+   "seconds": 2.37,
+   "top": [
+    "Cambridge IELTS 08.md#p45",
+    "Cambridge IELTS 08.md#p45",
+    "Cambridge IELTS 08.md#p47"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q16",
+   "type": "en_para",
+   "query": "Visitors to galleries feel insignificant because the artworks carry huge monetary value assigned by powerful institutions",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.13,
+   "top": [
+    "Cambridge IELTS 10.md#p169",
+    "Cambridge IELTS 10.md#p53",
+    "Cambridge IELTS 10.md#p51"
+   ],
+   "rank": 3
+  },
+  {
+   "id": "q17",
+   "type": "en_para",
+   "query": "Which nations earn most of their income from holidaymakers, and which rank it as their top employer?",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.16,
+   "top": [
+    "Cambridge IELTS 10.md#p67",
+    "Cambridge IELTS 10.md#p66",
+    "Cambridge IELTS 10.md#p67"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q18",
+   "type": "en_para",
+   "query": "What share of Claude usage falls in tasks rated fully feasible for an LLM alone versus tasks rated not feasible?",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.49,
+   "top": [
+    "Nowcasting_Econ-Report-Final (1).md#p4",
+    "Nowcasting_Econ-Report-Final (1).md#p4",
+    "Nowcasting_Econ-Report-Final (1).md#p5"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q19",
+   "type": "exact",
+   "query": "Nearly all computers contain a quartz-crystal clock to regulate",
+   "mode": "exact-phrase",
+   "matches": 1,
+   "seconds": 0.0,
+   "top": [
+    "Cambridge IELTS 08.md#p18"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q20",
+   "type": "exact",
+   "query": "factors and all of them need to be present before the revolution can happen",
+   "mode": "exact-phrase",
+   "matches": 1,
+   "seconds": 0.0,
+   "top": [
+    "Cambridge IELTS 10.md#p43"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q21",
+   "type": "exact",
+   "query": "AI còn lâu mới đạt được năng lực lý thuyết của mình",
+   "mode": "exact-phrase",
+   "matches": 1,
+   "seconds": 0.0,
+   "top": [
+    "Nowcasting_Econ-Report-Final (1).md#p2"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q22",
+   "type": "exact",
+   "query": "Still in public use is Neemrana Ki Baori",
+   "mode": "exact-phrase",
+   "matches": 1,
+   "seconds": 0.0,
+   "top": [
+    "Cambridge IELTS 10.md#p19"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q23",
+   "type": "exact",
+   "query": "Are you come from China?",
+   "mode": "exact-phrase",
+   "matches": 1,
+   "seconds": 0.01,
+   "top": [
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p38"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q24",
+   "type": "keyword",
+   "query": "Anthony Synott Concordia University",
+   "mode": "keywords-ranked",
+   "matches": 1,
+   "seconds": 1.2,
+   "top": [
+    "Cambridge IELTS 08.md#p49"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q25",
+   "type": "keyword",
+   "query": "Friends complete tenth season",
+   "mode": "semantic",
+   "matches": 1,
+   "seconds": 1.76,
+   "top": [
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p73"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q26",
+   "type": "keyword",
+   "query": "McGraw-Hill Dictionary of American Idioms Richard Spears",
+   "mode": "semantic",
+   "matches": 2,
+   "seconds": 0.52,
+   "top": [
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p78",
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p78"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q27",
+   "type": "keyword",
+   "query": "9.923.717 dòng Financial cao",
+   "mode": "semantic",
+   "matches": 5,
+   "seconds": 3.32,
+   "top": [
+    "Soniox Console.md#p1",
+    "Soniox Console.md#p1",
+    "Soniox Console.md#p2"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q28",
+   "type": "keyword",
+   "query": "Albert Einstein explain it simply",
+   "mode": "keywords-ranked",
+   "matches": 1,
+   "seconds": 1.71,
+   "top": [
+    "f7b7a21578d4ecf3cbe8960512dd573a_document_compress (4).md#p5"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q29",
+   "type": "vi_native",
+   "query": "Nếu sa thải toàn bộ lao động thuộc nhóm 10% độ bao phủ cao nhất thì tỷ lệ thất nghiệp của nhóm tứ phân vị trên tăng lên bao nhiêu?",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.55,
+   "top": [
+    "Nowcasting_Econ-Report-Final (1).md#p12",
+    "Nowcasting_Econ-Report-Final (1).md#p12",
+    "Nowcasting_Econ-Report-Final (1).md#p11"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q30",
+   "type": "vi_native",
+   "query": "Cứ tăng 10 điểm phần trăm độ bao phủ thì dự báo tăng trưởng việc làm của BLS giảm bao nhiêu?",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 2.43,
+   "top": [
+    "Nowcasting_Econ-Report-Final (1).md#p9",
+    "Nowcasting_Econ-Report-Final (1).md#p8",
+    "Nowcasting_Econ-Report-Final (1).md#p8"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q31",
+   "type": "vi_native",
+   "query": "Doanh số ngoại hối lũy kế tháng là bao nhiêu tỷ và giao dịch mới nhất được đẩy sang vào ngày nào?",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 6.19,
+   "top": [
+    "Soniox Console.md#p3",
+    "Soniox Console.md#p3",
+    "Soniox Console.md#p6"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q32",
+   "type": "vi_native",
+   "query": "Tại sao quy mô Kasa bị lệch khoảng 570 tỷ giữa dữ liệu ngày 30 tháng 1 và snapshot tháng 11?",
+   "mode": "semantic",
+   "matches": 6,
+   "seconds": 6.1,
+   "top": [
+    "Soniox Console.md#p5",
+    "Soniox Console.md#p5",
+    "Soniox Console.md#p6"
+   ],
+   "rank": 1
+  },
+  {
+   "id": "q33",
+   "type": "negative",
+   "query": "doanh thu Nike năm 2023",
+   "mode": "keywords+semantic",
+   "matches": 0,
+   "seconds": 2.7,
+   "top": [],
+   "neg": "pass"
+  },
+  {
+   "id": "q34",
+   "type": "negative",
+   "query": "giá vé máy bay đi Đà Nẵng",
+   "mode": "semantic-low",
+   "matches": 3,
+   "seconds": 1.38,
+   "top": [
+    "Cambridge IELTS 08.md#p103",
+    "Cambridge IELTS 10.md#p132",
+    "Cambridge IELTS 08.md#p130"
+   ],
+   "neg": "low"
+  },
+  {
+   "id": "q35",
+   "type": "negative",
+   "query": "kết quả kinh doanh Coteccons quý 4",
+   "mode": "keywords-ranked",
+   "matches": 1,
+   "seconds": 1.18,
+   "top": [
+    "Soniox Console.md#p6"
+   ],
+   "neg": "fail"
+  },
+  {
+   "id": "q36",
+   "type": "negative",
+   "query": "lịch thi IELTS tháng 12",
+   "mode": "keywords-ranked",
+   "matches": 3,
+   "seconds": 1.63,
+   "top": [
+    "Soniox Console.md#p1",
+    "Soniox Console.md#p3",
+    "Nowcasting_Econ-Report-Final (1).md#p15"
+   ],
+   "neg": "fail"
+  },
+  {
+   "id": "q37",
+   "type": "negative",
+   "query": "lãi suất tiết kiệm Vietcombank hiện nay",
+   "mode": "semantic-low",
+   "matches": 1,
+   "seconds": 4.21,
+   "top": [
+    "Soniox Console.md#p7"
+   ],
+   "neg": "low"
+  },
+  {
+   "id": "q38",
+   "type": "negative",
+   "query": "Soniox hỗ trợ bao nhiêu ngôn ngữ và bảng giá API là bao nhiêu",
+   "mode": "keywords-ranked",
+   "matches": 1,
+   "seconds": 0.66,
+   "top": [
+    "Nowcasting_Econ-Report-Final (1).md#p15"
+   ],
+   "neg": "fail"
+  },
+  {
+   "id": "q39",
+   "type": "negative",
+   "query": "How to deploy a FastAPI app on Kubernetes",
+   "mode": "keywords+semantic",
+   "matches": 0,
+   "seconds": 6.21,
+   "top": [],
+   "neg": "pass"
+  },
+  {
+   "id": "q40",
+   "type": "negative",
+   "query": "tác động của AI đến lạm phát và GDP của Việt Nam",
+   "mode": "semantic-low",
+   "matches": 6,
+   "seconds": 2.66,
+   "top": [
+    "Nowcasting_Econ-Report-Final (1).md#p3",
+    "Nowcasting_Econ-Report-Final (1).md#p11",
+    "Nowcasting_Econ-Report-Final (1).md#p7"
+   ],
+   "neg": "low"
+  }
+ ]
+}

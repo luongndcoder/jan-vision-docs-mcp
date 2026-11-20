@@ -683,8 +683,13 @@ def search_notes(query: str, vault_root: str | None = None,
     import math as _m
     wt = {w: _m.log((n_pages + 1) / (df.get(w, 0) + 1)) + 0.1 for w in words}
     need = 0.6 * sum(wt.values())
+    # Từ khoá không xuất hiện ở BẤT KỲ trang nào (thường là thực thể chính:
+    # "coteccons", "nike") -> trang khớp các từ còn lại không trả lời được
+    # câu hỏi; bỏ tầng keyword, chỉ tin semantic. (Vault trộn Việt/Anh làm
+    # IDF của từ tiếng Việt phổ thông bị thổi phồng nên IDF một mình chưa đủ.)
+    absent = [w for w in words if not df.get(w)]
     scored = []
-    for r in cands:
+    for r in ([] if absent else cands):
         cov = sum(wt[w] for w in r[6])
         if cov >= need:
             scored.append(r + (cov,))
