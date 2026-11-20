@@ -145,20 +145,22 @@ Test: `pdf_info("/Cambridge IELTS 10.pdf")` → tự tìm ra
 
 KHÔNG cần fork Jan. Thay vào đó giảm ma sát nạp liệu về mức "kéo-thả".
 
-### Watch folder (launchd, chạy nền tự động)
+### Watch folder (TÙY CHỌN — mặc định TẮT từ v4)
+
+Luồng chuẩn giờ là **web upload**. Watcher chỉ bật khi cài với
+`bash install.sh --with-watch`, hoặc chạy riêng `bash install_watch.sh`:
 
 ```bash
-~/Documents/Vault/_dropbox/     ← THẢ FILE VÀO ĐÂY (pdf/docx/md/ảnh)
-                    │  launchd agent quét mỗi 60s (file phải copy xong ≥15s)
+~/Documents/Vault/_dropbox/     ← (khi bật) thả file vào đây
+                    │  launchd agent quét mỗi 60s (file cũ ≥15s)
                     ▼
         Vision OCR → note .md vào ~/Documents/Vault/Inbox/
         file gốc chuyển sang _dropbox/_done/  (lỗi → _failed/)
         log: watch.log
 ```
 
-- Cài (đã cài sẵn): `bash install_watch.sh`
 - Tắt: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.watch.plist`
-- Gỡ hẳn: xóa file plist trên
+- Gỡ hẳn: xóa file plist trên + thư mục `_dropbox`
 
 ### Tool `batch_ingest` (gọi từ Jan chat hoặc dùng tay)
 
@@ -166,10 +168,12 @@ KHÔNG cần fork Jan. Thay vào đó giảm ma sát nạp liệu về mức "k�
 file đã có note mới hơn thì skip (`skip_existing=true`). Dùng trước khi
 upload một loạt vào Jan Project (Jan không OCR — phải từ .md).
 
-### Luồng chuẩn cho PDF scan (từ 0.8.8)
+### Luồng chuẩn (từ v4 — chỉ web upload)
 
-thả scan vào `_dropbox` (hoặc `batch_ingest`) → duyệt note ở `Inbox/` → chuyển
-sang `Notes/` → upload file `.md` vào Jan Project → chunk + embed + KNN chạy tốt.
+mở **http://127.0.0.1:8765** → kéo thả file vào trang → note `.md` vào `Inbox/`,
+gốc vào `_done_web/` → chọn Jan project trên web → tự sync khi OCR xong (hoặc
+bấm "Đồng bộ tất cả") → mở Jan hỏi. Không cần Finder, không cần kéo file vào
+project nào cả.
 
 ## v3.1 — hardening search_notes (QA 20/11/2026)
 
@@ -253,8 +257,9 @@ Step 4 — Verify (all must pass; fix and re-verify if not):
 - `.venv/bin/python -c "import server"` runs without error (from repo dir).
 - `launchctl list | grep ai.jan.visdocs` shows `watch` and `webui` agents.
 - `curl -s http://127.0.0.1:8765/healthz` returns "ok" (web upload UI).
-- Drop ANY test file (pdf/docx/md/png) into <vault>/_dropbox/, wait up to
-  90 s, confirm a new .md note appears in <vault>/Inbox/.
+- Open http://127.0.0.1:8765 in a browser and drop ANY test file
+  (pdf/docx/md/txt/png) onto the page; wait up to 90 s; confirm the job card
+  turns "done" and the note appears in the vault list (<vault>/Inbox/).
 - In the repo dir, run:
   .venv/bin/python -c "import json,server;r=json.loads(\
   server.server_extra.search_notes('test'));print(r['mode'],r['matches'])"
@@ -285,7 +290,7 @@ GET  /jobs          ← trạng thái từng file: pending → running → done/
 ```
 
 - Vault/port: env `PDF_OCR_VAULT`, `PDF_OCR_WEBUI_PORT` (mặc định 8765).
-- Không đụng `_dropbox/` — upload web và watcher hoạt động song song không
+- Không đụng `_dropbox/` — kể cả khi bật watcher tùy chọn, hai luồng không
   xử lý trùng file.
 - Cài: `bash install_webui.sh` (install.sh tự gọi). Gỡ: `launchctl bootout
   gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.webui.plist`.
@@ -323,8 +328,8 @@ vi/en nếu muốn nhanh).
 
 - Mọi upload đi kèm `langs` → job dùng đúng bộ ngôn ngữ đó, frontmatter ghi
   `ocr_langs` tương ứng; card hàng đợi hiển thị languages đang dùng.
-- Watcher `_dropbox/` vẫn dùng `PDF_OCR_LANGS` mặc định — muốn tiếng Trung
-  qua watcher thì `launchctl setenv`/sửa plist, hoặc dùng web cho từng file.
+- Watcher (tùy chọn) dùng `PDF_OCR_LANGS` mặc định — chọn ngôn ngữ từng file
+  thì dùng web upload (chips ngôn ngữ ngay trên trang).
 - Vision Live Text hỗ trợ đầy đủ Hán (zh-Hans/zh-Hant) — đã test render
   PingFang sạch: OCR đúng 100% ký tự.
 - Tìm kiếm sau đó vẫn chạy cross-language vì bge-m3 đa ngữ (tier-2 keyword
