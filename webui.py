@@ -404,6 +404,8 @@ async function send(fs){
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
  .replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 
+/* ---- jobs: change-detection — chỉ vẽ lại khi trạng thái thật sự đổi ---- */
+const cards=new Map();                 // id -> last status (bộ nhớ so sánh)
 function addCard(id,name){
  const d=document.createElement('div');d.className='job';d.id='j_'+id;
  d.style.animationDelay=(z++*40)+'ms';
@@ -411,43 +413,51 @@ function addCard(id,name){
   <div style="min-width:0"><div class="jname">${esc(name)}</div>
   <div class="jmeta" id="m_${id}"></div></div>
   <span class="jstat pend" id="t_${id}">đang chờ</span>`;
- jobsEl.prepend(d);}
+ jobsEl.prepend(d);
+ cards.set(id,'__new');}
 
-function render(j){
- const t=document.getElementById('t_'+j.id);
- if(!t){addCard(j.id,j.name)}
- const st=document.getElementById('s_'+j.id),tm=t||document.getElementById('t_'+j.id),
-       mt=document.getElementById('m_'+j.id);
- if(!tm)return;
+function apply(j){
+ const id=j.id,prev=cards.get(id);
+ if(!prev)return;                       // card lỗi format, không theo dõi
+ if(prev===j.status)return;             /* KHÔNG đổi gì — bỏ qua, không vẽ */
+ cards.set(id,j.status);
+ const st=document.getElementById('s_'+id),tm=document.getElementById('t_'+id),
+       mt=document.getElementById('m_'+id);
  if(j.status==='pending'){st.textContent='•';st.className='jstat pend';
-   tm.className='jstat pend';tm.textContent='đang chờ';mt.textContent='';}
+  tm.className='jstat pend';tm.textContent='đang chờ';mt.textContent='';}
  if(j.status==='running'){st.innerHTML='<span class="spin"></span>';
-   st.className='jstat';tm.className='jstat pend';tm.textContent='đang OCR…';
-   mt.innerHTML='<div class="shimmer"></div>';}
+  st.className='jstat';tm.className='jstat pend';tm.textContent='đang OCR…';
+  mt.innerHTML='<div class="shimmer"></div>';}
  if(j.status==='done'){st.textContent='✓';st.className='jstat ok';
-   tm.className='jstat ok';
-   tm.innerHTML=`xong · ${j.seconds}s &nbsp;<a href="#" data-note="${esc(j.note)}">xem note</a>`;
-   mt.textContent='→ '+j.note;loadNotes();}
+  tm.className='jstat ok';
+  tm.innerHTML=`xong · ${j.seconds}s <a href="#" data-note="${esc(j.note)}">xem note</a>`;
+  mt.textContent='→ '+j.note;loadNotes(true);}
  if(j.status==='failed'){st.textContent='✕';st.className='jstat fail';
-   tm.className='jstat fail';tm.textContent=j.error||'lỗi';mt.textContent='';}}
+  tm.className='jstat fail';tm.textContent=j.error||'lỗi';mt.textContent='';}}
 jobsEl.addEventListener('click',e=>{const a=e.target.closest('[data-note]');
  if(a){e.preventDefault();openPanel(a.dataset.note);}});
 
 let seenErr=0;
 async function poll(){
- const old=seenErr;
  try{const js=await(await fetch('/jobs')).json();
-  const ids=new Set(js.map(j=>j.id));js.forEach(render);
-  document.querySelectorAll('#jobs .job').forEach(c=>{
-   const id=c.id.slice(2);if(id&&!ids.has(id)&&!c.querySelector('.fail'))c.remove();});
- }catch(e){seenErr++;if(seenErr===2&&old<2)toast('Mất kết nối tới server.');}
- }
+  const ids=new Set(js.map(j=>j.id));js.forEach(apply);
+  cards.forEach((_,id)=>{if(!ids.has(id)&&document.getElementById('j_'+id)){
+   document.getElementById('j_'+id).remove();cards.delete(id);}});
+  seenErr=0;}
+ catch(e){seenErr++;if(seenErr===2)toast('Mất kết nối tới server.');}}
 setInterval(poll,1500);poll();
 
-function fmtName(n){return n.replace(/\.md$/i,'')}
-async function loadNotes(){
+/* ---- notes: chỉ vẽ lại khi dữ liệu thật sự đổi (signature check) ---- */
+let notesSig='';
+function gkey(n){return n.name+'|'+n.mtime+'|'+n.kb}
+async function loadNotes(force){
  let ns;try{ns=await(await fetch('/notes')).json();}catch(e){return;}
- $('#count').innerHTML=`<b>${ns.length}</b>&nbsp;note${ns.length?`&nbsp;·&nbsp;cập nhật ${new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'})}`:''}`;
+ const sig=JSON.stringify(ns.map(gkey));
+ if(sig===notesSig&&!force)return;       /* không đổi — không vẽ, không giật */
+ notesSig=sig;
+ $('#count').innerHTML=`<b>${ns.length}</b>&nbsp;note${ns.length?
+  `&nbsp;·&nbsp;cập nhật ${new Date().toLocaleTimeString('vi-VN',
+   {hour:'2-digit',minute:'2-digit'})}`:''}`;
  if(!ns.length){notesEl.innerHTML=`<div class="empty">
   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#8f99a5"
    stroke-width="1.5"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
@@ -464,7 +474,7 @@ notesEl.addEventListener('click',e=>{const a=e.target.closest('[data-note]');
 /* ---- preview panel ---- */
 const panel=$('#panel'),scrim=$('#scrim');
 async function openPanel(name){
- $('#ptitle').textContent=fmtName(name);
+ $('#ptitle').textContent=name.replace(/\.md$/i,'');
  $('#pbody').textContent='Đang tải…';
  $('#pdl').href='/download/'+encodeURIComponent(name);
  panel.classList.add('open');scrim.classList.add('on');
