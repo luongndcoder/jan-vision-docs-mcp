@@ -21,7 +21,7 @@ FAIL = os.path.join(DROP, "_failed")
 HERE = os.path.dirname(os.path.abspath(__file__))
 POLL = int(os.environ.get("PDF_OCR_WATCH_POLL", "20"))
 
-SUPPORTED = {".pdf", ".docx", ".md", ".markdown", ".png", ".jpg", ".jpeg",
+SUPPORTED = {".pdf", ".docx", ".md", ".markdown", ".txt", ".text", ".png", ".jpg", ".jpeg",
              ".heic", ".heif", ".tiff", ".tif", ".webp", ".bmp"}
 
 

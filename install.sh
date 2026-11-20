@@ -1,6 +1,6 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
-# install.sh — one-shot installer for jan-pdf-ocr-mcp on any macOS machine.
+# install.sh — one-shot installer for jan-vision-docs-mcp on any macOS machine.
 #
 # Cài:    bash install.sh
 # Tuỳ chọn (env hoặc flag):
@@ -23,7 +23,7 @@ BAKE_SHA="950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167"
 BGE_URL="https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
 MODEL_CANDIDATES=(
   "$DIR/models/bge-m3-Q8_0.gguf"
-  "$HOME/.local/share/jan-pdf-ocr/bge-m3-Q8_0.gguf"
+  "$HOME/.local/share/jan-vision-docs/bge-m3-Q8_0.gguf"
   "$HOME/Library/Application Support/Jan/data/llamacpp/models/sentence-transformer-mini/model.gguf"
 )
 
@@ -85,7 +85,7 @@ else
   if [[ ! -d "$HOME/Library/Application Support/Jan" ]]; then
     warn "Không thấy Jan app — bỏ qua patch MCP config. Cài Jan rồi chạy lại install.sh."
   else
-    say "Đăng ký MCP server 'pdf-ocr' vào Jan"
+    say "Đăng ký MCP server 'vision-docs' vào Jan"
     .venv/bin/python patch_jan_config.py \
       --config "$JAN_CFG" \
       --server-cmd "$DIR/.venv/bin/python" \
@@ -107,4 +107,4 @@ echo
 say "Hoàn tất. Kiểm tra nhanh:"
 echo "  1) Thả file PDF/DOCX/ảnh vào: $VAULT/_dropbox/"
 echo "     → ~1 phút sau note .md xuất hiện trong $VAULT/Inbox/"
-echo "  2) Mở Jan → New Thread → hỏi: 'list files trong vault' (tool pdf-ocr)"
+echo "  2) Mở Jan → New Thread → hỏi: 'list files trong vault' (tool vision-docs)"

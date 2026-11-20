@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Idempotently register the pdf-ocr MCP server in Jan's mcp_config.json.
+"""Idempotently register the vision-docs MCP server in Jan's mcp_config.json.
 
 Usage:
     python patch_jan_config.py --server-cmd <venv-python> --server-script <server.py> \
         [--config <mcp_config.json>] [--langs vi-VN,en-US] [--vault <path>] [--no-backup]
 
 - Creates the file (with a minimal skeleton) if Jan has never configured MCP.
-- Updates the existing `pdf-ocr` entry in place; other servers are untouched.
+- Updates the existing `vision-docs` entry in place; prunes the legacy
+  `pdf-ocr` entry if present; other servers are untouched.
 - Writes a timestamped .bak next to the config on first modification.
 - Exit 0 on success, 1 on error. Prints the resulting entry as JSON.
 """
@@ -21,7 +22,8 @@ import sys
 
 DEFAULT_CONFIG = os.path.expanduser(
     "~/Library/Application Support/Jan/data/mcp_config.json")
-KEY = "pdf-ocr"
+KEY = "vision-docs"
+LEGACY_KEYS = ("pdf-ocr",)
 
 
 def main() -> int:
@@ -63,6 +65,9 @@ def main() -> int:
 
     old = cfg["mcpServers"].get(KEY)
     cfg["mcpServers"][KEY] = entry
+    for legacy in LEGACY_KEYS:
+        if cfg["mcpServers"].pop(legacy, None) is not None:
+            print(f"pruned legacy entry `{legacy}`")
 
     if os.path.isfile(cfg_path) and not args.no_backup:
         bak = cfg_path + datetime.datetime.now().strftime(".bak.%Y%m%d-%H%M%S")

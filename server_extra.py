@@ -300,6 +300,10 @@ def ingest_document(path: str, vault_root: str | None = None,
         body, n_images, missing = _md_to_md(path, langs,
                                            attach_dir if copy_images else None,
                                            out_dir)
+    elif ext in (".txt", ".text"):
+        raw = open(path, encoding="utf-8", errors="replace").read()
+        body = f"# {os.path.basename(path)}\n\n{raw}"
+        n_images = 0
     elif ext in IMAGE_EXTS:
         n_images = 1
         if copy_images:
@@ -312,7 +316,7 @@ def ingest_document(path: str, vault_root: str | None = None,
         body += ocr_image_file(path, langs)
     else:
         raise ValueError(f"Unsupported file type: {ext}. Supported: "
-                         ".pdf .docx .md .png .jpg .heic .webp .tiff")
+                         ".pdf .docx .md .txt .png .jpg .heic .webp .tiff")
 
     front = ("---\n"
              f'source: "{os.path.basename(path)}"\n'
@@ -400,7 +404,7 @@ def batch_ingest(folder: str, vault_root: str | None = None,
                  dest: str = "Inbox", languages: str | None = None,
                  dpi: float = 200.0, skip_existing: bool = True) -> str:
     """Scan a folder (recursively, but ignoring hidden dirs) and ingest every
-    supported file (.pdf .docx .md .png/.jpg/...). Returns a JSON summary."""
+    supported file (.pdf .docx .md .txt .png/.jpg/...). Returns a JSON summary."""
     folder = resolve_file(folder)
     if not os.path.isdir(folder):
         raise FileNotFoundError(f"Folder not found: {folder}")
@@ -412,7 +416,7 @@ def batch_ingest(folder: str, vault_root: str | None = None,
             if name.startswith("."):
                 continue
             ext = os.path.splitext(name)[1].lower()
-            if ext not in ({".pdf", ".docx", ".md", ".markdown"} | IMAGE_EXTS):
+            if ext not in ({".pdf", ".docx", ".md", ".markdown", ".txt", ".text"} | IMAGE_EXTS):
                 continue
             fp = os.path.join(root, name)
             stem = os.path.splitext(name)[0]
@@ -596,14 +600,14 @@ def _find_emb_model() -> str:
     """Locate the bge-m3 GGUF embedding model, portable across machines.
 
     Priority: PDF_OCR_EMB_MODEL env -> <project>/models/ (shipped or
-    downloaded by install.sh) -> ~/.local/share/jan-pdf-ocr/ -> legacy:
+    downloaded by install.sh) -> ~/.local/share/jan-vision-docs/ -> legacy:
     the GGUF overlaid inside Jan's `sentence-transformer-mini` dir.
     Returns "" when no model exists (semantic tier degrades gracefully).
     """
     candidates = [
         os.environ.get("PDF_OCR_EMB_MODEL", ""),
         os.path.join(_THIS_DIR, "models", _EMB_MODEL_FILENAME),
-        os.path.expanduser(f"~/.local/share/jan-pdf-ocr/{_EMB_MODEL_FILENAME}"),
+        os.path.expanduser(f"~/.local/share/jan-vision-docs/{_EMB_MODEL_FILENAME}"),
         os.path.expanduser(
             "~/Library/Application Support/Jan/data/llamacpp/models/"
             "sentence-transformer-mini/model.gguf"),

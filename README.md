@@ -1,4 +1,4 @@
-# jan-pdf-ocr-mcp
+# jan-vision-docs-mcp
 
 Local MCP server đọc PDF (kể cả bản scan / ảnh chụp) bằng **AI OCR chạy 100% local
 trên Mac** — Apple Vision framework (Live Text), không gửi dữ liệu đi đâu, hỗ trợ
@@ -9,7 +9,7 @@ Dùng cho **Jan** (https://jan.ai) qua MCP, hoạt động với cả model loca
 ## Cấu trúc
 
 ```
-jan-pdf-ocr-mcp/
+jan-vision-docs-mcp/
 ├── server.py           # MCP server (stdio) + 4 tools
 ├── make_test_pdf.py    # sinh PDF test (text vector + trang giả lập scan)
 ├── requirements.txt
@@ -28,7 +28,7 @@ jan-pdf-ocr-mcp/
 ## Test không cần Jan
 
 ```bash
-cd ~/Documents/AI/jan-pdf-ocr-mcp
+cd ~/Documents/AI/jan-vision-docs-mcp
 .venv/bin/python server.py --selftest /tmp/pdfocr_test/test.pdf
 # trong Jan: thử prompt "Đọc /tmp/pdfocr_test/test.pdf và tóm tắt điều 5"
 ```
@@ -38,16 +38,16 @@ cd ~/Documents/AI/jan-pdf-ocr-mcp
 `~/Library/Application Support/Jan/data/mcp_config.json`:
 
 ```json
-"pdf-ocr": {
-  "command": "~/Documents/AI/jan-pdf-ocr-mcp/.venv/bin/python",
-  "args": ["~/Documents/AI/jan-pdf-ocr-mcp/server.py"],
+"vision-docs": {
+  "command": "~/Documents/AI/jan-vision-docs-mcp/.venv/bin/python",
+  "args": ["~/Documents/AI/jan-vision-docs-mcp/server.py"],
   "env": { "PDF_OCR_LANGS": "vi-VT,en-US" },
   "active": true
 }
 ```
 
 `mcpSettings.toolCallTimeoutSeconds` đã tăng 30 → 180 (OCR nhiều trang lâu hơn).
-Restart Jan → Settings → MCP Servers phải thấy `pdf-ocr` active.
+Restart Jan → Settings → MCP Servers phải thấy `vision-docs` active.
 
 ## Lưu ý khi dùng trong Jan
 
@@ -154,7 +154,7 @@ KHÔNG cần fork Jan. Thay vào đó giảm ma sát nạp liệu về mức "k�
 ```
 
 - Cài (đã cài sẵn): `bash install_watch.sh`
-- Tắt: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.jan.pdfocr.watch.plist`
+- Tắt: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.watch.plist`
 - Gỡ hẳn: xóa file plist trên
 
 ### Tool `batch_ingest` (gọi từ Jan chat hoặc dùng tay)
@@ -194,13 +194,13 @@ Yêu cầu máy đích: **macOS 13+** (Apple Silicon tốt nhất), `python3`,
 **Jan app**. Sau đó chỉ 1 lệnh:
 
 ```bash
-unzip jan-pdf-ocr-mcp-v3.1.zip && cd jan-pdf-ocr-mcp
+unzip jan-vision-docs-mcp-v3.1.zip && cd jan-vision-docs-mcp
 bash install.sh
 ```
 
 `install.sh` tự làm: tạo `.venv` + cài deps → tạo Vault (`~/Documents/Vault`
 hoặc `$PDF_OCR_VAULT`) → tìm/thỏ tải **bge-m3-Q8_0.gguf** (~634MB, kiểm SHA256)
-về `models/` → đăng ký server `pdf-ocr` vào `mcp_config.json` của Jan (có backup,
+về `models/` → đăng ký server `vision-docs` vào `mcp_config.json` của Jan (có backup,
 idempotent) → cài launchd watch agent. Cờ: `--no-jan --no-watch --no-model`.
 
 Lưu ý cho máy đích:
@@ -211,8 +211,8 @@ Lưu ý cho máy đích:
   `.../Jan/data/llamacpp/models/sentence-transformer-mini/` bằng file
   `bge-m3-Q8_0.gguf` vừa tải (giữ nguyên `model.yml`), rồi xoá và upload lại
   các file trong project để Jan re-index (chunk vectors 1024 chiều).
-- Gỡ: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.jan.pdfocr.watch.plist`,
-  xoá entry `pdf-ocr` trong `mcp_config.json`, xoá thư mục này.
+- Gỡ: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.watch.plist`,
+  xoá entry `vision-docs` trong `mcp_config.json`, xoá thư mục này.
 
 ## 🤖 Prompt cho agent tự cài (dán vào terminal agent trên máy mới)
 
@@ -221,9 +221,9 @@ này vào — agent sẽ chủ động kiểm tra, cài và verify không cần 
 
 ```text
 You are a setup agent on this macOS machine. Install and verify the
-jan-pdf-ocr-mcp local MCP server so Jan can OCR + search documents.
+jan-vision-docs-mcp local MCP server so Jan can OCR + search documents.
 
-Repo: https://github.com/luongndcoder/jan-pdf-ocr-mcp
+Repo: https://github.com/luongndcoder/jan-vision-docs-mcp
 
 Step 1 — Preconditions (check first, fix autonomously when safe):
 - python3 >= 3.9 present? (`python3 --version`). If missing install via brew.
@@ -234,13 +234,13 @@ Step 1 — Preconditions (check first, fix autonomously when safe):
   rest and let the user rerun `install.sh` after Jan is installed.
 
 Step 2 — Get the code:
-git clone https://github.com/luongndcoder/jan-pdf-ocr-mcp.git \
-  ~/Documents/AI/jan-pdf-ocr-mcp
+git clone https://github.com/luongndcoder/jan-vision-docs-mcp.git \
+  ~/Documents/AI/jan-vision-docs-mcp
 (If a zip archive was provided instead, unzip it to that same folder.)
 
 Step 3 — Install (uses default vault ~/Documents/Vault; prefix
 PDF_OCR_VAULT=/path/to/vault to change):
-cd ~/Documents/AI/jan-pdf-ocr-mcp && bash install.sh
+cd ~/Documents/AI/jan-vision-docs-mcp && bash install.sh
 Expect: venv created, deps installed, bge-m3-Q8_0.gguf (~634 MB) downloaded
 with SHA256 verification, Jan mcp_config.json patched (a .bak backup is
 created), launchd watcher installed. If the download fails, retry once.
@@ -248,7 +248,7 @@ Do not skip or bypass the SHA256 check.
 
 Step 4 — Verify (all must pass; fix and re-verify if not):
 - `.venv/bin/python -c "import server"` runs without error (from repo dir).
-- `launchctl list | grep ai.jan.pdfocr.watch` shows the watcher.
+- `launchctl list | grep ai.jan.visdocs.watch` shows the watcher.
 - Drop ANY test file (pdf/docx/md/png) into <vault>/_dropbox/, wait up to
   90 s, confirm a new .md note appears in <vault>/Inbox/.
 - In the repo dir, run:
@@ -261,3 +261,7 @@ load at startup), then verify in Jan. Report back: vault path, what was
 installed, whether Jan restart is still pending, and the uninstall
 commands. Never claim verification you did not actually perform.
 ```
+
+> Ghi chú: các biến môi trường giữ tiền tố `PDF_OCR_*` (`PDF_OCR_VAULT`,
+> `PDF_OCR_LANGS`, `PDF_OCR_EMB_MODEL`...) để tương thích ngược — đổi tên
+> repo/server không ảnh hưởng chúng.

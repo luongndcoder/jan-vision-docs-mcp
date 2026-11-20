@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-jan-pdf-ocr-mcp — Local MCP server cho Jan trên macOS.
+jan-vision-docs-mcp — Local MCP server cho Jan trên macOS (Vision OCR).
 
 Doc file PDF (ke ca ban scan, anh chup) bang AI OCR chay 100% local tren Mac
 (Apple Vision framework - Live Text, ho tro tieng Viet `vi-VT`).
@@ -58,9 +58,9 @@ import pypdf
 
 DEFAULT_LANGS = os.environ.get("PDF_OCR_LANGS", "vi-VN,en-US")
 MCP = FastMCP(
-    "pdf-ocr",
+    "vision-docs",
     instructions=(
-        "Read PDF/DOCX/MD/images locally on the Mac using Apple's Vision OCR. "
+        "Read PDF/DOCX/MD/TXT/images locally on the Mac using Apple's Vision OCR. "
         "CRITICAL RULE - NEVER INVENT A FILENAME: only search files that the "
         "user actually mentioned, that exist in the conversation, or that are "
         "in ~/Documents/Vault (Inbox/ or Notes/). If the user's question does "
