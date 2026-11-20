@@ -27,10 +27,11 @@ MODEL_CANDIDATES=(
   "$HOME/Library/Application Support/Jan/data/llamacpp/models/sentence-transformer-mini/model.gguf"
 )
 
-NO_JAN=0; NO_WATCH=0; NO_MODEL=0; NO_WEB=0
+NO_JAN=0; NO_MODEL=0; NO_WEB=0; WITH_WATCH=0
 for arg in "$@"; do
   case "$arg" in
-    --no-jan) NO_JAN=1 ;; --no-watch) NO_WATCH=1 ;; --no-model) NO_MODEL=1 ;;
+    --no-jan) NO_JAN=1 ;; --no-model) NO_MODEL=1 ;; --no-web) NO_WEB=1 ;;
+    --with-watch) WITH_WATCH=1 ;;
     --no-web) NO_WEB=1 ;;
     *) echo "Flag lạ: $arg (dùng: --no-jan --no-watch --no-model)"; exit 1 ;;
   esac
@@ -104,17 +105,18 @@ else
   PDF_OCR_VAULT="$VAULT" bash install_webui.sh
 fi
 
-# --- 7. watch folder (launchd) ----------------------------------------------
-if (( NO_WATCH )); then
-  warn "Bỏ qua launchd watch agent (--no-watch)"
-else
-  say "Cài launchd agent tự OCR khi thả file vào $VAULT/_dropbox/"
+# --- 7. watch folder (launchd) — TÙY CHỌN, mặc định TẮT -----------------------
+# Luồng chuẩn giờ là web upload (http://127.0.0.1:8765). Watcher chỉ dành cho
+# ai muốn lại flow thả file Finder: bash install.sh --with-watch
+if (( WITH_WATCH )); then
+  say "Cài launchd watcher (tùy chọn) — thả file vào $VAULT/_dropbox/"
   PDF_OCR_VAULT="$VAULT" bash install_watch.sh
+else
+  say "Bỏ qua watcher: xử lý file bằng web upload (mặc định từ v4)"
 fi
 
 echo
 say "Hoàn tất. Kiểm tra nhanh:"
-echo "  1) Thả file PDF/DOCX/ảnh vào: $VAULT/_dropbox/"
-echo "     → ~1 phút sau note .md xuất hiện trong $VAULT/Inbox/"
-echo "  2) Mở http://127.0.0.1:8765 — kéo thả file, xem tiến trình OCR + danh sách note"
-echo "  3) Mở Jan → New Thread → hỏi: 'list files trong vault' (tool vision-docs)"
+echo "  1) Mở http://127.0.0.1:8765 — kéo thả file vào trang, theo dõi OCR realtime"
+echo "     → note .md vào $VAULT/Inbox/, file gốc vào $VAULT/_done_web/"
+echo "  2) Mở Jan → New Thread → hỏi: 'list files trong vault' (tool vision-docs)"
