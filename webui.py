@@ -464,7 +464,8 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 #scrim{position:fixed;inset:0;background:#00000066;opacity:0;pointer-events:none;
   transition:opacity .25s;z-index:15}
 #scrim.on{opacity:1;pointer-events:auto}
-.xbtn{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+.xbtn{display:inline-flex;align-items:center;justify-content:center;
+  background:var(--panel2);border:1px solid var(--line);color:var(--muted);
   width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:15px;flex:none;
   transition:color .2s,border-color .2s}
 .xbtn:hover{color:var(--text)}
@@ -474,6 +475,13 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   padding:11px 18px;border-radius:11px;font-size:13.5px;z-index:30;
   transition:transform .3s cubic-bezier(.2,.8,.25,1);box-shadow:var(--shadow)}
 .toast.on{transform:translate(-50%,0)}
+
+/* ---------- sticky header thư viện + load more ---------- */
+.stickybar{position:sticky;top:0;z-index:9;margin:-14px 0 6px;padding:14px 0 0;
+ background:linear-gradient(to bottom,
+   color-mix(in srgb,var(--bg) 94%,transparent) 0%,
+   color-mix(in srgb,var(--bg) 88%,transparent) 74%,transparent 100%);}
+.lmore{display:flex;justify-content:center;padding:6px 0 2px}
 
 /* ---------- custom project dropdown ---------- */
 .projdd{position:relative}
@@ -504,7 +512,7 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .pmeta{margin-left:auto;font:400 10.5px var(--mono);color:var(--faint)}
 .pempty{padding:11px 12px;color:var(--faint);font-size:13px}
 
-).psep{height:1px;background:var(--line);margin:6px 4px}
+.psep{height:1px;background:var(--line);margin:6px 4px}
 .plabel{font:600 10px var(--sans);letter-spacing:.1em;text-transform:uppercase;
  color:var(--faint);padding:7px 9px 4px}
 .prow.dead{cursor:default;opacity:.75}
@@ -549,8 +557,7 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .jb.busy{opacity:.4;pointer-events:none}
 .jb.okpop{animation:pop .4s ease}
 .toast.ok{border-color:#4fb07144;color:var(--ok)}
-.ic-moon{display:none}[data-theme="light"] .ic-sun{display:none}
-[data-theme="light"] .ic-moon{display:block}
+/* icon theme được JS swap trong nút #themebtn */
 [data-theme="light"] .toast{box-shadow:0 12px 30px -14px #00000040}
 [data-theme="light"] .projpop{box-shadow:0 24px 60px -18px #00000030,0 1px 0 #ffffff60 inset}
 [data-theme="light"] ::selection{background:#c0673533}
@@ -591,11 +598,8 @@ document.documentElement.dataset.theme=
   <div class="sidefoot">
     <div style="display:flex;align-items:center;gap:10px">
       <span class="srv"><span class="dot"></span> server đang chạy</span>
-      <button class="xbtn" id="themebtn" aria-label="Chuyển sáng/tối" title="Sáng / tối"
-        style="width:26px;height:26px;font-size:12px">
-        <svg class="ic-sun" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        <svg class="ic-moon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-      </button>
+      <button class="xbtn" id="themebtn" aria-label="Chuyển sáng/tối"
+        title="Sáng / tối" style="width:26px;height:26px"></button>
     </div>
     <div class="vault" title=\"""" + html.escape(VAULT) + """">""" + html.escape(VAULT) + """</div>
   </div>
@@ -649,6 +653,7 @@ document.documentElement.dataset.theme=
   </section>
 
   <section class="view" id="view-library">
+    <div class="stickybar">
     <div class="vhead vrow">
       <div><h1>Thư viện</h1><p id="libsub">—</p></div>
       <div class="chips">
@@ -669,6 +674,7 @@ document.documentElement.dataset.theme=
       </div>
       <button class="btn2" id="syncall">Đồng bộ tất cả</button>
       <span class="qstat" id="janinfo"></span>
+    </div>
     </div>
     <div id="notes"></div>
   </section>
@@ -703,11 +709,18 @@ $('#nav-up').onclick=()=>showView('upload');
 $('#nav-lib').onclick=()=>showView('library');
 
 /* ---------- theme sáng/tối ---------- */
+const SVGS={
+ sun:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+ moon:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'};
+function paintThemeBtn(){
+ const dark=document.documentElement.dataset.theme==='dark';
+ $('#themebtn').innerHTML=dark?SVGS.sun:SVGS.moon;}
 $('#themebtn').onclick=()=>{
  const cur=document.documentElement.dataset.theme==='dark'?'dark':'light';
  const next=cur==='dark'?'light':'dark';
  document.documentElement.dataset.theme=next;
- localStorage.setItem('vd.theme',next);};
+ localStorage.setItem('vd.theme',next);
+ paintThemeBtn();};
 
 /* ---------- ngôn ngữ OCR ---------- */
 let selLangs=new Set();
@@ -1015,16 +1028,20 @@ async function loadNotes(){
  $('#libsub').textContent=ns.length?`${ns.length} note đã OCR — bấm tên để xem trước`
   :'Vault chưa có note nào — nạp file ở tab "Nạp tài liệu"';
  renderNotes(ns);}
+let noteLimit=25;
 function renderNotes(ns){
  ns=ns.filter(n=>filterF==='all'||n.folder===filterF);
+ const total=ns.length;
+ ns=ns.slice(0,noteLimit);
  const ST=ns.map(n=>{const s=noteState(n.name);
   return {...s,cls:s.n===0?'':'on',
-   txt:s.n===0?(selProjs.size?'\u2192 Jan':'Jan')
-    :(s.k===s.n?'\u2713 Jan':(s.k>0?`\u25d0 ${s.k}/${s.n}`:'\u2192 Jan'))};});
- if(!ns.length){$('#notes').innerHTML=`<div class="empty">
+   txt:s.n===0?(selProjs.size?'→ Jan':'Jan')
+    :(s.k===s.n?'✓ Jan':(s.k>0?`◐ ${s.k}/${s.n}`:'→ Jan'))};});
+ if(!ns.length&&!total){$('#notes').innerHTML=`<div class="empty">
   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#8f99a5"
    stroke-width="1.5"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
-  <div>${filterF==='all'?'Vault còn trống':'Chưa có note trong '+(filterF==='Inbox'?'Inbox':'Notes')}</div></div>`;return;}
+  <div>${
+  filterF==='all'?'Vault còn trống':'Chưa có note trong '+(filterF==='Inbox'?'Inbox':'Notes')}</div></div>`;return;}
  $('#notes').innerHTML=ns.map((n,i)=>{const st=ST[i];return `<div class="nrow" style="animation-delay:${Math.min(i,12)*30}ms">
   <span class="ftag">${n.folder}</span>
   <span class="nname"><a data-note="${esc(n.name)}" title="Xem trước">${esc(n.name)}</a></span>
@@ -1036,7 +1053,10 @@ function renderNotes(ns){
    <a data-note="${esc(n.name)}" title="Xem trước note">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>Xem</a>
    <a href="/download/${encodeURIComponent(n.name)}" title="Tải file .md">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 20h16"/></svg>Tải .md</a></span></div>`}).join('');}
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 20h16"/></svg>Tải .md</a></span></div>`}).join('')
+  +(total>noteLimit?`<div class="lmore"><button class="btn2" id="loadmore">Tải thêm · còn ${total-noteLimit} note</button></div>`:'');}
+document.addEventListener('click',e=>{if(e.target.closest('#loadmore')){
+ noteLimit+=50;renderNotes(lastNotes);}});
 
 /* ---------- preview panel ---------- */
 const panel=$('#panel'),scrim=$('#scrim');
@@ -1055,7 +1075,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
 function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  t.classList.toggle('ok',!!ok);t.classList.add('on');
  setTimeout(()=>t.classList.remove('on'),3200);}
-restoreLangs();migrateProjStore();loadProjects();loadNotes();setInterval(loadNotes,8000);
+restoreLangs();paintThemeBtn();migrateProjStore();loadProjects();loadNotes();setInterval(loadNotes,8000);
 </script></body></html>"""
 
 
