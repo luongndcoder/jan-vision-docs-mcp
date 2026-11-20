@@ -214,6 +214,12 @@ def projects():
     return jan_sync.list_projects()
 
 
+@app.get("/jan-embed")
+def jan_embed():
+    """Jan's project embedding model matches what we write (bge-m3)?"""
+    return jan_sync.embed_status()
+
+
 @app.get("/jan-state")
 def jan_state(projects: str = ""):
     """state cho NHIỀU project: projects=id1,id2 -> {pid: {path: {...}}}"""
@@ -235,6 +241,9 @@ def jan_sync_ep(body: dict):
         pids = [p for p in pids.split(",") if p]
     if body.get("project"):
         pids.append(body["project"])
+    st = jan_sync.embed_status()
+    if not st["ok"]:
+        return {"error": st["reason"]}
     projs = {p["id"]: p for p in jan_sync.list_projects()}
     pids = [p for p in dict.fromkeys(pids) if p in projs]
     if not pids:
@@ -490,6 +499,10 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   transition:color .2s,border-color .2s}
 .xbtn:hover{color:var(--text)}
 .xbtn:active{transform:translateY(1px)}
+.janwarn{flex-basis:100%;margin-top:8px;padding:9px 12px;border-radius:9px;
+  border:1px solid color-mix(in srgb,var(--err) 45%,transparent);
+  background:color-mix(in srgb,var(--err) 10%,transparent);color:var(--err);
+  font-size:13px;line-height:1.45}
 .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);
   background:var(--panel2);border:1px solid #d9695a44;color:var(--err);
   padding:11px 18px;border-radius:11px;font-size:13.5px;z-index:30;
@@ -695,6 +708,7 @@ document.documentElement.dataset.theme=
       </div>
       <button class="btn2" id="syncall">Đồng bộ tất cả</button>
       <span class="qstat" id="janinfo"></span>
+      <div class="janwarn" id="janwarn" hidden></div>
     </div>
     </div>
     <div id="notes"></div>
@@ -968,7 +982,14 @@ function renderProjPop(){
    else toast(r.error||'kh\u00f4ng xo\u00e1 \u0111\u01b0\u1ee3c');}
   catch(err){toast('kh\u00f4ng k\u1ebft n\u1ed1i \u0111\u01b0\u1ee3c');}
   loadProjects();});}
+async function loadEmbed(){
+ const w=$('#janwarn');
+ try{const st=await(await fjson('/jan-embed')).json();
+  if(st.ok){w.hidden=true;w.textContent='';}
+  else{w.hidden=false;w.textContent='⚠ '+st.reason;}
+ }catch(e){}}
 async function loadProjects(){
+ loadEmbed();
  try{projList=await(await fjson('/projects')).json();}catch(e){projList=[]}
  if(!projList.length){$('#projwrap').style.display='none';renderNotes(lastNotes);return;}
  const ids=new Set(projList.filter(p=>p.alive).map(p=>p.id));
@@ -1028,7 +1049,10 @@ $('#syncall').onclick=async()=>{
   if(r.error){toast(r.error);return;}
   Object.values(r.projects||{}).forEach(pp=>{
    const s=pp.summary||{};
-   parts.push(`${pp.name}: m\u1edbi ${(s.synced||[]).length}, b\u1ecf qua ${(s.skipped||[]).length}`);
+   if(s.error){parts.push(`${pp.name}: ${s.error}`);anyFail=true;return;}
+   const rm=(s.removed||[]).length;
+   parts.push(`${pp.name}: m\u1edbi ${(s.synced||[]).length}, b\u1ecf qua ${(s.skipped||[]).length}`+
+    (rm?`, dọn ${rm} note đã xoá/di chuyển`:''));
    if((s.failed||[]).length)anyFail=true;});
   toast(parts.join(' \u00b7 '),!anyFail);
  }catch(e){toast('\u0110\u1ed3ng b\u1ed9 l\u1ed7i \u2014 server c\u00f3 ch\u1ea1y kh\u00f4ng?');}
@@ -1039,9 +1063,13 @@ async function autoJan(note){
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({notes:[note],projects:[...selProjs]})},900000)).json();
-  const names=Object.values(r.projects||{}).map(pp=>pp.name);
-  if(names.length)toast(`T\u1ef1 \u0111\u1ed9ng v\u00e0o ${names.join(', ')}: ${note}`,true);
-  loadJan(true);}catch(e){}}
+  if(r.error){toast('Không tự đồng bộ được vào Jan: '+r.error);loadEmbed();return;}
+  const bad=[];const names=[];
+  Object.values(r.projects||{}).forEach(pp=>{const res=(pp.results||[])[0];
+   if(res&&res.ok)names.push(pp.name);else bad.push(pp.name+': '+((res&&res.error)||'lỗi'));});
+  if(bad.length)toast('Tự đồng bộ lỗi — '+bad.join(' · '));
+  else if(names.length)toast(`T\u1ef1 \u0111\u1ed9ng v\u00e0o ${names.join(', ')}: ${note}`,true);
+  loadJan(true);}catch(e){toast('Tự đồng bộ vào Jan lỗi — server có chạy không?');}}
 
 /* ---------- notes / library ---------- */
 let notesSig='',filterF='all';

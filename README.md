@@ -73,8 +73,8 @@ Restart Jan → Settings → MCP Servers phải thấy `vision-docs` active.
 
 ```bash
 ~/Documents/Vault/          # vault mặc định (đặt lại qua env PDF_OCR_VAULT)
-├── Inbox/                   # note OCR thô, chờ duyệt — KHÔNG đưa vào RAG index
-├── Notes/                   # đã dọn — đưa file này vào Jan Project để index
+├── Inbox/                   # note OCR mới — được auto-sync vào Jan project
+├── Notes/                   # tuỳ chọn: chỗ sắp xếp note đã dọn (cũng được sync)
 └── Attachments/<tên-file>/  # ảnh được copy vào (link Obsidian tương đối)
 ```
 
@@ -94,9 +94,12 @@ Restart Jan → Settings → MCP Servers phải thấy `vision-docs` active.
 
 ### Quy trình khuyến nghị
 
-1. `ingest_document` (hoặc nhờ Jan gọi) → note vào `Inbox/`
-2. Đọc lại, chỉnh `source_path`/tag/backlink → chuyển sang `Notes/`
-3. Upload các file trong `Notes/` vào Jan **Project** để RAG index (tăng `retrieval_limit` lên ~8-10)
+1. Kéo thả file vào web UI (hoặc `ingest_document`) → note vào `Inbox/`
+2. Note tự sync vào Jan project đã chọn — cả `Inbox/` lẫn `Notes/` đều vào RAG,
+   không có bước duyệt bắt buộc. Muốn sửa lỗi OCR thì sửa note rồi bấm
+   **Đồng bộ tất cả** (re-index theo nội dung, không theo kích thước file).
+3. `Notes/` chỉ để sắp xếp; chuyển note qua lại rồi bấm **Đồng bộ tất cả** để
+   cập nhật path. Tăng `retrieval_limit` của project lên ~8-10.
 
 ### Test
 
@@ -216,8 +219,12 @@ Lưu ý cho máy đích:
   là `all-MiniLM-L6-v2` (chỉ tiếng Anh). Muốn tìm tiếng Việt cross-language
   mạnh như trên máy này, thay `model.gguf` của thư mục
   `.../Jan/data/llamacpp/models/sentence-transformer-mini/` bằng file
-  `bge-m3-Q8_0.gguf` vừa tải (giữ nguyên `model.yml`), rồi xoá và upload lại
-  các file trong project để Jan re-index (chunk vectors 1024 chiều).
+  `bge-m3-Q8_0.gguf` vừa tải, và trong `model.yml` đổi `pooling: mean` →
+  `pooling: cls`; restart Jan rồi bấm **Đồng bộ tất cả** (chunk vectors 1024
+  chiều). **Bắt buộc** nếu dùng sync từ web UI: web UI kiểm tra model này
+  (`/jan-embed`, CLI `jan_sync.py --embed-check`) và chặn sync + hiện cảnh
+  báo khi Jan còn dùng MiniLM 384 chiều — nếu không, RAG trong Jan tìm không
+  ra gì mà không báo lỗi.
 - Gỡ: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.watch.plist`,
   xoá entry `vision-docs` trong `mcp_config.json`, xoá thư mục này.
 
@@ -307,17 +314,24 @@ chunks(id, text, embedding BLOB float32-1024, file_id, chunk_file_order)
 
 `jan_sync.py` tái hiện đúng pipeline của Jan: cắt chunk **512 ký tự** (không
 overlap — check với project 637 chunks do chính Jan tạo), embedding **bge-m3**
-qua llama-server local, ghi float32 little-endian поход cùng format. Note được
-thêm/đổi thì re-index (DELETE + INSERT transaction).
+qua llama-server local, ghi float32 little-endian cùng format. Note được
+thêm/đổi **nội dung** thì re-index (DELETE + INSERT transaction); note trong
+vault đã xoá/di chuyển bị dọn khỏi index khi bấm **Đồng bộ tất cả**
+(file Jan tự index ngoài vault không bị đụng tới).
 
 - **Tự động**: OCR xong là note vào project đang chọn + toast thông báo.
 - Trong tab **Thư viện**: chọn Jan project (select) → từng note có nút
   `→ Jan` / `✓ Jan nk`, hoặc bấm **Đồng bộ tất cả**.
-- CLI: `.venv/bin/python jan_sync.py --list | --all | "<note.md>"`
+- CLI: `.venv/bin/python jan_sync.py --list | --all | --embed-check | "<note.md>"`
 
-Yêu cầu duy nhất: đã có project trong Jan (tạo 1 lần trong app).
-Lưu ý nếu vault dùng Obsidian di chuyển note sau khi sync, chạy lại sync
-để cập nhật path mới.
+Yêu cầu: đã có project trong Jan (tạo 1 lần trong app) và model embedding
+của Jan là bge-m3 (xem mục cài đặt). Di chuyển/xoá note trong Obsidian →
+bấm **Đồng bộ tất cả** để cập nhật path và dọn entry cũ.
+
+**Hai nguồn tra cứu trong Jan:** RAG của project (Jan tự chèn chunk vào
+hội thoại — hỏi đáp chung, tóm tắt) và tool `search_notes` (trích dẫn có số
+trang, kiểm số liệu, xác nhận "không có trong tài liệu"). Server instructions
+hướng model dùng đúng cái; chunk RAG không có số trang.
 
 ## 🌏 Chọn ngôn ngữ OCR (từng lần nạp)
 

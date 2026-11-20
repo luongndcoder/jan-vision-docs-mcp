@@ -108,6 +108,101 @@ def purge_project(pid: str) -> str:
     raise FileNotFoundError(f"không có project {pid}")
 
 
+# ---------------------------------------------------------------------------
+# Jan embedding model check — vectors we write are bge-m3 (1024-dim, CLS
+# pooling). If Jan still embeds queries with its stock MiniLM (384-dim, mean
+# pooling) every synced chunk is unreachable by RAG and NOTHING errors out.
+# ---------------------------------------------------------------------------
+
+JAN_EMB_DIR = os.path.join(JAN_DATA, "llamacpp", "models",
+                           "sentence-transformer-mini")
+EXPECTED_DIM = 1024
+_EMB_STATUS_CACHE: dict = {}
+
+
+def _gguf_embedding_length(fp: str) -> int | None:
+    """Read `<arch>.embedding_length` from a GGUF header (no deps)."""
+    fixed = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1,
+             10: 8, 11: 8, 12: 8}
+
+    def u32(f):
+        return struct.unpack("<I", f.read(4))[0]
+
+    def u64(f):
+        return struct.unpack("<Q", f.read(8))[0]
+
+    def skip(f, t):
+        if t in fixed:
+            f.seek(fixed[t], 1)
+        elif t == 8:
+            f.seek(u64(f), 1)
+        elif t == 9:
+            et, n = u32(f), u64(f)
+            if et in fixed:
+                f.seek(fixed[et] * n, 1)
+            else:
+                for _ in range(n):
+                    skip(f, et)
+        else:
+            raise ValueError(f"unknown gguf type {t}")
+
+    with open(fp, "rb") as f:
+        if f.read(4) != b"GGUF":
+            return None
+        u32(f)          # version
+        u64(f)          # tensor count
+        for _ in range(u64(f)):
+            key = f.read(u64(f)).decode("utf-8", "replace")
+            t = u32(f)
+            if key.endswith(".embedding_length") and t in (4, 5, 10, 11):
+                n = fixed[t]
+                fmt = {4: "<I", 5: "<i", 10: "<Q", 11: "<q"}[t]
+                return struct.unpack(fmt, f.read(n))[0]
+            skip(f, t)
+    return None
+
+
+def embed_status() -> dict:
+    """{"ok", "dim", "pooling", "reason"} for Jan's project embedding model."""
+    gguf = os.path.join(JAN_EMB_DIR, "model.gguf")
+    yml = os.path.join(JAN_EMB_DIR, "model.yml")
+    if not os.path.isfile(gguf):
+        return {"ok": False, "dim": None, "pooling": None,
+                "reason": ("Không thấy model embedding của Jan "
+                           f"({gguf}). Mở Jan một lần để nó tải model, "
+                           "rồi chạy lại install.sh.")}
+    st = os.stat(gguf)
+    key = (st.st_mtime, st.st_size,
+           os.path.getmtime(yml) if os.path.isfile(yml) else 0)
+    if _EMB_STATUS_CACHE.get("key") == key:
+        return _EMB_STATUS_CACHE["val"]
+    try:
+        dim = _gguf_embedding_length(gguf)
+    except (OSError, ValueError, struct.error):
+        dim = None
+    pooling = None
+    if os.path.isfile(yml):
+        for line in open(yml, encoding="utf-8", errors="replace"):
+            if line.strip().startswith("pooling:"):
+                pooling = line.split(":", 1)[1].strip()
+    fix = ("Thay model.gguf trong thư mục sentence-transformer-mini của Jan "
+           "bằng bge-m3-Q8_0.gguf (đặt pooling: cls trong model.yml), "
+           "restart Jan rồi bấm Đồng bộ tất cả.")
+    if dim != EXPECTED_DIM:
+        val = {"ok": False, "dim": dim, "pooling": pooling,
+               "reason": (f"Model embedding của Jan là {dim or '?'} chiều, "
+                          f"note sync vào cần {EXPECTED_DIM} chiều (bge-m3) — "
+                          "Jan sẽ không tìm thấy gì. " + fix)}
+    elif pooling and pooling != "cls":
+        val = {"ok": False, "dim": dim, "pooling": pooling,
+               "reason": (f"Jan đang dùng pooling: {pooling}, bge-m3 cần "
+                          "pooling: cls — kết quả RAG sẽ lệch. " + fix)}
+    else:
+        val = {"ok": True, "dim": dim, "pooling": pooling, "reason": ""}
+    _EMB_STATUS_CACHE.update(key=key, val=val)
+    return val
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY,
@@ -163,20 +258,25 @@ def sync_note(db: str, note_path: str, force: bool = False) -> dict:
     note_path = os.path.abspath(note_path)
     if not os.path.isfile(note_path):
         return {"ok": False, "error": f"không có file: {note_path}"}
+    st = embed_status()
+    if not st["ok"]:
+        return {"ok": False, "error": st["reason"]}
+    text = open(note_path, encoding="utf-8", errors="replace").read()
+    pieces = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)]
+    pieces = [p for p in pieces if p.strip()]
     con = _conn(db)
     try:
         old = con.execute("SELECT id FROM files WHERE path=?",
                           (note_path,)).fetchone()
         if old and not force:
-            size = os.path.getsize(note_path)
-            cur_size = con.execute(
-                "SELECT size FROM files WHERE id=?", (old[0],)).fetchone()
-            if cur_size and cur_size[0] == size:
+            # So nội dung chunk thay vì size: sửa lỗi OCR giữ nguyên số byte
+            # (0->O, đổi dấu) vẫn phải re-index.
+            stored = [r[0] for r in con.execute(
+                "SELECT text FROM chunks WHERE file_id=? "
+                "ORDER BY chunk_file_order", (old[0],))]
+            if stored == pieces:
                 return {"ok": True, "chunks": 0, "file_id": old[0],
                         "skipped": True}
-        text = open(note_path, encoding="utf-8", errors="replace").read()
-        pieces = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)]
-        pieces = [p for p in pieces if p.strip()]
         vectors = _embed(pieces) if pieces else []
         file_id = str(uuid.uuid4())
         name = os.path.basename(note_path)
@@ -201,8 +301,35 @@ def sync_note(db: str, note_path: str, force: bool = False) -> dict:
         con.close()
 
 
+def prune_missing(db: str, vault_root: str) -> list[str]:
+    """Remove index entries for VAULT notes that no longer exist (deleted or
+    moved). Files outside the vault (added via Jan itself) are untouched."""
+    root = os.path.abspath(os.path.expanduser(vault_root)) + os.sep
+    con = _conn(db)
+    removed = []
+    try:
+        rows = con.execute("SELECT id, path FROM files").fetchall()
+        gone = [(fid, p) for fid, p in rows
+                if p and p.startswith(root) and not os.path.isfile(p)]
+        with con:
+            for fid, p in gone:
+                con.execute("DELETE FROM chunks WHERE file_id=?", (fid,))
+                con.execute("DELETE FROM files WHERE id=?", (fid,))
+                removed.append(os.path.basename(p))
+    finally:
+        con.close()
+    return removed
+
+
 def sync_all(db: str, vault_root: str, force: bool = False) -> dict:
-    """Sync every vault note (Inbox + Notes) into the project db."""
+    """Sync every vault note (Inbox + Notes) into the project db, then drop
+    entries of notes that were deleted/moved. Inbox is synced on purpose:
+    the web-upload flow writes there and auto-syncs; Notes/ is optional
+    organisation, not a review gate."""
+    st = embed_status()
+    if not st["ok"]:
+        return {"synced": [], "skipped": [], "failed": [], "removed": [],
+                "error": st["reason"]}
     paths = []
     for sub in ("Inbox", "Notes"):
         d = os.path.join(vault_root, sub)
@@ -220,7 +347,9 @@ def sync_all(db: str, vault_root: str, force: bool = False) -> dict:
         else:
             synced.append({"note": os.path.basename(p),
                            "chunks": r["chunks"]})
-    return {"synced": synced, "skipped": skipped, "failed": failed}
+    removed = prune_missing(db, vault_root)
+    return {"synced": synced, "skipped": skipped, "failed": failed,
+            "removed": removed}
 
 
 if __name__ == "__main__":
@@ -232,7 +361,12 @@ if __name__ == "__main__":
     ap.add_argument("--list", action="store_true", help="liệt kê projects")
     ap.add_argument("--all", action="store_true", help="sync cả vault")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--embed-check", action="store_true",
+                    help="kiểm tra model embedding của Jan có phải bge-m3")
     a = ap.parse_args()
+    if a.embed_check:
+        print(json.dumps(embed_status(), ensure_ascii=False, indent=1))
+        sys.exit(0)
     if a.list:
         print(json.dumps(list_projects(), ensure_ascii=False, indent=1))
         sys.exit(0)
