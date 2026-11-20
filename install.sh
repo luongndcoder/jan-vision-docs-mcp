@@ -5,7 +5,7 @@
 # Cài:    bash install.sh
 # Tuỳ chọn (env hoặc flag):
 #   PDF_OCR_VAULT=/path/vault   bash install.sh         # vault vị trí khác
-#   bash install.sh --no-jan    --no-watch    --no-model
+#   bash install.sh --no-jan --no-model --no-web --with-watch
 #
 # Yêu cầu trên máy đích:
 #   - macOS 13+ (Apple Silicon khuyên dùng; Vision OCR cần 10.15+)
@@ -33,7 +33,7 @@ for arg in "$@"; do
     --no-jan) NO_JAN=1 ;; --no-model) NO_MODEL=1 ;; --no-web) NO_WEB=1 ;;
     --with-watch) WITH_WATCH=1 ;;
     --no-web) NO_WEB=1 ;;
-    *) echo "Flag lạ: $arg (dùng: --no-jan --no-watch --no-model)"; exit 1 ;;
+    *) echo "Flag lạ: $arg (dùng: --no-jan --no-model --no-web --with-watch)"; exit 1 ;;
   esac
 done
 
@@ -52,8 +52,15 @@ mkdir -p "$VAULT/_dropbox" "$VAULT/Inbox" "$VAULT/Notes" "$VAULT/Attachments"
 # --- 2. Venv + deps ---------------------------------------------------------
 say "Tạo .venv và cài Python deps (~1-2 phút lần đầu)"
 [[ -d .venv ]] || python3 -m venv .venv
-.venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q -r requirements.txt
+if [[ -d "$DIR/wheels" ]] && ls "$DIR/wheels"/*.whl >/dev/null 2>&1; then
+  # Cài OFFLINE từ wheelhouse đóng gói sẵn (tạo trên máy có mạng:
+  #   .venv/bin/pip download -r requirements.txt -d wheels )
+  say "Cài deps OFFLINE từ wheels/ (không cần mạng)"
+  .venv/bin/pip install -q --no-index --find-links "$DIR/wheels" -r requirements.txt
+else
+  .venv/bin/pip install -q --upgrade pip
+  .venv/bin/pip install -q -r requirements.txt
+fi
 
 # --- 3. Embedding model (bge-m3 Q8, ~634MB) ---------------------------------
 find_model() {
