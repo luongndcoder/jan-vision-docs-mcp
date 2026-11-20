@@ -623,7 +623,7 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .prow.dead .pchk{border-style:dashed;border-color:var(--line)}
 .ppurge{margin-left:10px;font:500 11px var(--sans);color:var(--err);cursor:pointer;
  background:none;border:1px solid var(--err);padding:4px 9px;border-radius:7px;
- transition:background .15s,transform .1s}
+ transition:background .15s,transform .1s;white-space:nowrap}
 .ppurge:hover{background:#d9695a1a}
 .ppurge:active{transform:translateY(1px)}
 .ppurge.armed{background:var(--err);color:#fff}
@@ -1043,8 +1043,8 @@ function renderProjPop(){
    <span class="pjmeta">${p.files?p.files+' file \u00b7 '+p.chunks+' chunks':'tr\u1ed1ng'}</span></div>`;
  const drow=d=>`<div class="prow dead">
    <span class="pchk"></span>
-   <span style="min-width:0"><span class="pname">${esc(d.name)}</span>
-     <div class="pshort">${d.db.split('/').pop()}</div></span>
+   <span style="min-width:0"><span class="pname">${esc(d.name||'(không rõ tên)')}</span>
+     <div class="pshort">${d.id}</div></span>
    <span class="pjmeta">${d.files} file \u00b7 ${d.chunks>999?
      (d.chunks/1000).toFixed(1)+'k':d.chunks} chunks</span>
    <button class="ppurge" data-purge="${d.id}"

@@ -54,39 +54,94 @@ def _project_refs(pid: str) -> tuple[int, str]:
     return refs, name
 
 
-def list_projects() -> list[dict]:
-    """Jan project DBs. `alive` = some thread still references it (a db
-    whose threads are gone means the project was deleted in Jan but the
-    app leaks the file on disk)."""
-    out = []
-    for fp in sorted(glob.glob(os.path.join(DB_DIR, "project_*.db"))):
-        pid = os.path.basename(fp)[len("project_"):-len(".db")]
-        if os.path.getsize(fp) == 0:
-            # Jan 0.8.8 tạo file DB rỗng ngay khi tạo project — chưa ghi
-            # schema hay metadata gì; coi như project mới, còn sống.
-            out.append({"id": pid, "name": "(mới tạo trong Jan)", "refs": 0,
-                        "alive": True, "db": fp, "files": 0, "chunks": 0,
-                        "new": True})
-            continue
+JAN_WEBKIT = os.path.expanduser("~/Library/WebKit/jan.ai.app/WebsiteData")
+
+
+def jan_folders() -> dict[str, str] | None:
+    """Danh sách project THẬT của Jan: {id: name}.
+
+    Jan 0.8.x lưu project ("folders") trong localStorage của webview
+    (key `thread-management`), không phải trong data/. Đọc từ bản sao
+    (db + wal) để không đụng vào file Jan đang mở. None nếu không đọc được.
+    """
+    import shutil
+    import tempfile
+    cands = glob.glob(os.path.join(JAN_WEBKIT, "Default", "*", "*",
+                                   "LocalStorage", "localstorage.sqlite3"))
+    best = None
+    for src in sorted(cands, key=os.path.getmtime, reverse=True):
+        tmp = tempfile.mkdtemp(prefix="jan_ls_")
         try:
-            con = sqlite3.connect(fp, timeout=5)  # read-only count, KHÔNG init schema
+            for ext in ("", "-wal", "-shm"):
+                if os.path.exists(src + ext):
+                    shutil.copy(src + ext, os.path.join(tmp, "ls.sqlite3" + ext))
+            con = sqlite3.connect(os.path.join(tmp, "ls.sqlite3"))
             try:
-                files = con.execute(
-                    "SELECT COUNT(*) FROM files").fetchone()[0]
-                chunks = con.execute(
-                    "SELECT COUNT(*) FROM chunks").fetchone()[0]
-            except sqlite3.Error:  # db có dữ liệu nhưng chưa schema (hiếm)
-                files, chunks = 0, 0
+                row = con.execute("SELECT value FROM ItemTable WHERE key=?",
+                                  ("thread-management",)).fetchone()
             finally:
                 con.close()
-        except sqlite3.Error:
+            if not row:
+                continue
+            raw = row[0].decode("utf-16-le") if isinstance(row[0], bytes) else row[0]
+            folders = (json.loads(raw).get("state") or {}).get("folders") or []
+            best = {f["id"]: f.get("name") or f["id"] for f in folders if f.get("id")}
+            break
+        except (sqlite3.Error, OSError, ValueError, KeyError):
             continue
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return best
+
+
+def _db_counts(fp: str) -> tuple[int, int]:
+    if not os.path.isfile(fp) or os.path.getsize(fp) == 0:
+        return 0, 0
+    try:
+        con = sqlite3.connect(fp, timeout=5)  # read-only count, KHÔNG init schema
+        try:
+            return (con.execute("SELECT COUNT(*) FROM files").fetchone()[0],
+                    con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        except sqlite3.Error:  # db có dữ liệu nhưng chưa schema (hiếm)
+            return 0, 0
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return 0, 0
+
+
+def list_projects() -> list[dict]:
+    """Jan projects + leaked DB files of deleted ones.
+
+    Nguồn chuẩn là jan_folders() (danh sách project trong Jan). `alive` =
+    project còn trong Jan; DB không có trong danh sách = project đã xoá mà
+    Jan để quên file. Không đọc được danh sách thì đoán qua thread như cũ.
+    """
+    folders = jan_folders()
+    dbs = {os.path.basename(fp)[len("project_"):-len(".db")]: fp
+           for fp in glob.glob(os.path.join(DB_DIR, "project_*.db"))}
+    out = []
+    if folders is not None:
+        for pid, name in folders.items():
+            fp = dbs.get(pid) or os.path.join(DB_DIR, f"project_{pid}.db")
+            files, chunks = _db_counts(fp)
+            out.append({"id": pid, "name": name, "alive": True, "db": fp,
+                        "files": files, "chunks": chunks,
+                        "new": not os.path.isfile(fp) or os.path.getsize(fp) == 0})
+        for pid, fp in sorted(dbs.items()):
+            if pid in folders:
+                continue
+            files, chunks = _db_counts(fp)
+            out.append({"id": pid, "name": _project_refs(pid)[1] or "",
+                        "alive": False, "db": fp, "files": files, "chunks": chunks})
+        return out
+    # fallback: đoán qua thread metadata (+ ân hạn 2h cho project mới)
+    for pid, fp in sorted(dbs.items()):
+        files, chunks = _db_counts(fp)
         refs, name = _project_refs(pid)
-        # project mới sync (chưa có thread nào trong Jan tham chiếu) sẽ
-        # bị oan là ghost; Grace period 2h kể từ lần ghi gần nhất.
         fresh = time.time() - os.path.getmtime(fp) < 7200
         out.append({"id": pid, "name": name or pid, "refs": refs,
-                    "alive": refs > 0 or fresh, "fresh": fresh,
+                    "alive": refs > 0 or fresh or os.path.getsize(fp) == 0,
                     "db": fp, "files": files, "chunks": chunks})
     return out
 
