@@ -3,12 +3,13 @@
 """webui.py — Local web upload UI for jan-vision-docs-mcp (localhost only).
 
 Binds 127.0.0.1 only — no LAN exposure, no auth. Serves:
-  GET  /            — drag & drop upload page with live OCR status
-  POST /upload      — multipart upload (pdf/docx/md/txt/images), queued
+  GET  /            — dashboard UI (upload queue + library), localhost only
+  POST /upload       — multipart upload (pdf/docx/md/txt/images), queued
   GET  /jobs        — JSON status of every job (pending/running/done/failed)
   GET  /notes       — JSON list of vault notes (Inbox + Notes)
-  GET  /note/<name> — preview a note as text (HTML-escaped)
+  GET  /note/<name>  — preview a note as text (HTML-escaped)
   GET  /download/<name> — download a .md note
+  GET  /meta        — {"build": ...} for hot-reload detection
   GET  /healthz     — "ok"
 
 Files are staged in <repo>/uploads/<job-id>/ (NOT _dropbox — the launchd
@@ -45,8 +46,7 @@ SUPPORTED = {".pdf", ".docx", ".md", ".markdown", ".txt", ".text",
              ".webp", ".bmp", ".gif"}
 
 app = FastAPI(title="jan-vision-docs web UI", docs_url=None, redoc_url=None)
-import os as _os
-BUILD = str(int(_os.path.getmtime(__file__)))
+BUILD = str(int(os.path.getmtime(__file__)))
 
 JOBS: dict[str, dict] = {}
 Q: "queue.Queue[str]" = queue.Queue()
@@ -63,6 +63,7 @@ def _worker() -> None:
         if not job:
             continue
         job["status"] = "running"
+        job["started"] = time.time()
         t0 = time.time()
         try:
             r = json.loads(se.ingest_document(path=job["src"]))
@@ -206,120 +207,150 @@ body{margin:0;background:var(--bg);color:var(--text);
 body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;z-index:0;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
 ::selection{background:#e08a5c33}
-.mono{font-family:var(--mono)}
-a{color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.mono{font-family:var(--mono)}
 
-header{position:sticky;top:0;z-index:5;backdrop-filter:blur(14px);
-  background:#0c0e11b8;border-bottom:1px solid var(--line)}
-.hwrap{max-width:920px;margin:0 auto;padding:14px 24px;display:flex;
-  align-items:center;gap:14px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;
-  letter-spacing:-.01em}
+/* ---------- layout: sidebar + main ---------- */
+#shell{display:grid;grid-template-columns:236px 1fr;min-height:100dvh}
+aside{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;
+  gap:6px;padding:18px 14px;border-right:1px solid var(--line);
+  background:#0c0e11cc;backdrop-filter:blur(10px);z-index:4}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15.5px;
+  letter-spacing:-.01em;padding:2px 8px 14px}
 .mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#e89a6d,#c8704a);
   display:grid;place-items:center;flex:none;
   box-shadow:0 4px 14px -4px #e08a5c55,0 0 0 1px #ffffff14 inset}
 .mark svg{width:16px;height:16px}
-.vault{font:400 12px/1 var(--mono);color:var(--muted);padding:7px 11px;
-  border:1px solid var(--line);border-radius:8px;background:var(--panel);
-  margin-left:auto;max-width:340px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
+.navlbl{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--faint);
+  text-transform:uppercase;padding:10px 10px 4px}
+.nav{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+  padding:10px 12px;border:0;border-radius:10px;background:none;
+  color:var(--muted);font:500 14px var(--sans);cursor:pointer;
+  transition:background .18s,color .18s}
+.nav svg{flex:none;opacity:.75}
+.nav:hover{background:#ffffff06;color:var(--text)}
+.nav:active{transform:translateY(1px)}
+.nav.on{background:var(--panel2);color:var(--text);
+  box-shadow:0 0 0 1px var(--line),0 1px 0 #ffffff08 inset}
+.nav.on svg{opacity:1;color:var(--accent)}
+.nbadge{margin-left:auto;font:500 11px var(--mono);color:var(--faint);
+  background:#ffffff08;padding:3px 8px;border-radius:6px}
+.nav.on .nbadge{color:var(--accent)}
+.sidefoot{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding:12px 10px 2px;
+  border-top:1px solid var(--line)}
+.vault{font:400 10.5px/1.5 var(--mono);color:var(--faint);word-break:break-all}
+.srv{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none;
   box-shadow:0 0 8px #4fb07188;animation:breathe 2.4s ease-in-out infinite}
 @keyframes breathe{50%{opacity:.55}}
 
-main{max-width:920px;margin:0 auto;padding:34px 24px 90px;position:relative;z-index:1}
-.hero{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap}
-h1{font-size:clamp(26px,4vw,34px);font-weight:600;letter-spacing:-.025em;
+main{padding:36px 40px 90px;position:relative;z-index:1}
+.view{display:none;max-width:860px;margin:0 auto}
+.view.on{display:block;animation:fadein .3s ease both}
+@keyframes fadein{from{opacity:0;transform:translateY(8px)}}
+.vhead{margin:2px 0 20px}
+.vhead h1{font-size:clamp(23px,3.2vw,30px);font-weight:600;letter-spacing:-.025em;
   margin:0;line-height:1.15;text-wrap:balance}
-.hero p{margin:6px 0 0;color:var(--muted);font-size:14.5px;max-width:52ch}
-.count{font:500 12px/1 var(--mono);color:var(--muted);letter-spacing:.02em;
-  padding:8px 12px;border:1px solid var(--line);border-radius:8px;
-  background:var(--panel);white-space:nowrap}
-.count b{color:var(--text);font-weight:600}
+.vhead p{margin:7px 0 0;color:var(--muted);font-size:14px;max-width:58ch}
+.vrow{display:flex;justify-content:space-between;align-items:end;gap:16px;flex-wrap:wrap}
 
+/* ---------- dropzone ---------- */
 #drop{position:relative;cursor:pointer;overflow:hidden;
-  border:1px solid var(--line);border-radius:18px;background:var(--panel);
-  padding:46px 22px;text-align:center;transition:border-color .25s,transform .15s;
-  --mx:50%;--my:50%}
+  border:1px solid var(--line);border-radius:16px;background:var(--panel);
+  padding:26px 22px;display:flex;align-items:center;gap:18px;text-align:left;
+  transition:border-color .25s,transform .15s;--mx:50%;--my:50%}
 #drop::before{content:"";position:absolute;inset:0;opacity:0;transition:opacity .3s;
-  background:radial-gradient(320px 200px at var(--mx) var(--my),#e08a5c14,transparent 70%)}
+  background:radial-gradient(300px 180px at var(--mx) var(--my),#e08a5c14,transparent 70%)}
 #drop:hover,#drop.over{border-color:var(--accent-dim)}
 #drop.over{transform:scale(.995);border-color:var(--accent)}
 #drop:hover::before,#drop.over::before{opacity:1}
-#drop .tz{width:54px;height:54px;margin:0 auto 16px;border-radius:15px;
-  background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;
-  transition:transform .25s cubic-bezier(.2,.9,.3,1.2)}
+#drop .tz{width:46px;height:46px;border-radius:13px;flex:none;
+  background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;transition:transform .25s cubic-bezier(.2,.9,.3,1.2)}
 #drop:hover .tz,#drop.over .tz{transform:translateY(-3px)}
-#drop b{font-weight:600;font-size:17px;letter-spacing:-.01em}
-#drop small{display:block;margin-top:7px;color:var(--muted);font-size:13px}
-.kinds{display:flex;gap:6px;justify-content:center;margin-top:18px;flex-wrap:wrap}
-.kind{font:500 11px/1 var(--mono);color:var(--faint);padding:5px 9px;
+#drop b{font-weight:600;font-size:15.5px;letter-spacing:-.01em}
+#drop small{display:block;margin-top:3px;color:var(--muted);font-size:12.5px}
+.kinds{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
+.kind{font:500 10.5px var(--mono);color:var(--faint);padding:4px 8px;
   border:1px solid var(--line);border-radius:6px;background:#0c0e11}
-#drop.over .kind{color:var(--accent);border-color:#e08a5c44}
+#drop:hover .kind,#drop.over .kind{color:var(--accent);border-color:#e08a5c38}
 
-#jobs{margin-top:26px;display:grid;gap:10px}
-.job{display:grid;grid-template-columns:20px 1fr auto;gap:14px;align-items:center;
-  padding:13px 16px;border-radius:12px;background:var(--panel);
-  border:1px solid var(--line);box-shadow:var(--shadow);
-  animation:enter .35s cubic-bezier(.2,.8,.3,1) both}
-@keyframes enter{from{opacity:0;transform:translateY(7px)}}
-@keyframes enter2{from{opacity:0;transform:translateY(9px)}}
-.jname{font-weight:500;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
-.jmeta{font:400 12px/1 var(--mono);color:var(--faint);margin-top:3px}
-.jstat{font-size:13px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+/* ---------- queue panels ---------- */
+.panel{margin-top:22px;border:1px solid var(--line);border-radius:14px;
+  background:var(--panel);overflow:hidden}
+.phead{display:flex;align-items:center;gap:10px;padding:13px 16px;
+  border-bottom:1px solid var(--line);background:var(--panel2)}
+.phead h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin:0}
+.qstat{margin-left:auto;font:500 11.5px var(--mono);color:var(--faint)}
+.qstat b{color:var(--text);font-weight:600}
+.jlist{display:grid}
+.jlist:empty{display:none}
+
+.job{display:grid;grid-template-columns:22px 1fr auto;gap:13px;align-items:center;
+  padding:12px 16px;border-bottom:1px solid #1c212a;transition:background .15s}
+.job:last-child{border-bottom:0}
+.job:hover{background:#ffffff04}
+.jstatus{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+  font-size:12px;background:var(--panel2);border:1px solid var(--line)}
+.jname{font-weight:500;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jinfo{font:400 11.5px var(--mono);color:var(--faint);margin-top:2px}
+.jact{font-size:13px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .pend{color:var(--muted)}
 .ok{color:var(--ok)}.fail{color:var(--err)}
 .spin{width:12px;height:12px;border-radius:50%;flex:none;
   border:1.6px solid #ffffff18;border-top-color:var(--accent);
   animation:r .8s linear infinite}
 @keyframes r{to{transform:rotate(360deg)}}
-.shimmer{height:2px;border-radius:2px;margin-top:9px;overflow:hidden;background:#ffffff0a}
-.shimmer::after{content:"";display:block;height:100%;width:38%;
-  background:linear-gradient(90deg,transparent,var(--accent-dim),transparent);
-  animation:slide 1.3s ease-in-out infinite}
-@keyframes slide{to{transform:translateX(280%)}}
-.jstat a{color:var(--accent);text-decoration:none;font:500 13px/1 var(--mono);
+.jtime{font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.jact a{color:var(--accent);text-decoration:none;font:500 12.5px var(--mono);
   padding:5px 10px;border:1px solid #e08a5c33;border-radius:7px;
   transition:background .2s,transform .1s}
-.jstat a:hover{background:#e08a5c14}
-.jstat a:active{transform:translateY(1px)}
+.jact a:hover{background:#e08a5c14}
+.jact a:active{transform:translateY(1px)}
+.job.pop{animation:pop .4s ease}
+@keyframes pop{30%{background:#e08a5c0f}}
+.empty-q{padding:26px 20px;text-align:center;color:var(--faint);font-size:13px}
 
-h2{font-size:13px;font-weight:600;color:var(--faint);letter-spacing:.08em;
-  margin:34px 0 6px;text-transform:uppercase}
-#notes{display:grid;gap:8px}
+/* ---------- library ---------- */
+.chips{display:flex;gap:7px}
+.chip{font:500 12px var(--sans);color:var(--muted);cursor:pointer;
+  background:none;border:1px solid var(--line);padding:6px 13px;border-radius:999px;
+  transition:color .18s,border-color .18s,background .18s}
+.chip:hover{color:var(--text)}
+.chip.on{color:var(--text);border-color:#e08a5c44;background:#e08a5c10}
+#notes{margin-top:16px;display:grid;gap:8px}
 .nrow{display:grid;grid-template-columns:auto 1fr 2fr auto;gap:14px;align-items:center;
-  padding:12px 16px;border-radius:12px;background:var(--panel);
-  border:1px solid transparent;transition:border-color .2s,transform .15s;
+  padding:13px 16px;border-radius:12px;background:var(--panel);
+  border:1px solid transparent;transition:border-color .2s;
   animation:enter2 .4s ease both}
-@keyframes cb{to{opacity:1;transform:none}}
+@keyframes enter2{from{opacity:0;transform:translateY(9px)}}
 .nrow:hover{border-color:var(--line)}
-.ftag{font:500 11px/1 var(--mono);color:var(--faint);padding:4px 8px;
+.ftag{font:500 10.5px var(--mono);color:var(--faint);padding:4px 8px;
   border:1px solid var(--line);border-radius:6px}
 .nname{font-weight:500;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nname a{text-decoration:none;cursor:pointer}
 .nname a:hover{color:var(--accent)}
-.ninfo{font:400 12px/1 var(--mono);color:var(--muted);text-align:right;
+.ninfo{font:400 12px var(--mono);color:var(--muted);text-align:right;
   font-variant-numeric:tabular-nums}
 .acts{display:flex;gap:8px;justify-content:flex-end}
-.acts a,.acts button{font:500 13px/1 var(--sans);color:var(--muted);cursor:pointer;
+.acts a,.acts button{font:500 13px var(--sans);color:var(--muted);cursor:pointer;
   text-decoration:none;background:none;border:1px solid var(--line);
   padding:6px 12px;border-radius:8px;transition:color .2s,border-color .2s,transform .1s}
 .acts a:hover,.acts button:hover{color:var(--text);border-color:#333b46}
 .acts a:active,.acts button:active{transform:translateY(1px)}
-.empty{padding:44px 20px;text-align:center;color:var(--muted);
+.empty{padding:52px 20px;text-align:center;color:var(--muted);
   border:1px dashed var(--line);border-radius:14px}
 .empty svg{opacity:.35;margin-bottom:10px}
 
+/* ---------- panel preview (slide-over) ---------- */
 #panel{position:fixed;top:0;right:0;bottom:0;width:min(560px,94vw);z-index:20;
   background:var(--panel);border-left:1px solid var(--line);
   transform:translateX(102%);transition:transform .28s cubic-bezier(.2,.8,.25,1);
   display:flex;flex-direction:column;box-shadow:-30px 0 70px -40px #000000d9}
 #panel.open{transform:none}
-.phead{display:flex;align-items:center;gap:12px;padding:15px 20px;
+.pheadp{display:flex;align-items:center;gap:12px;padding:15px 20px;
   border-bottom:1px solid var(--line)}
-.phead .t{font-weight:600;font-size:14.5px;flex:1;overflow:hidden;
+.pheadp .t{font-weight:600;font-size:14.5px;flex:1;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .pbody{flex:1;overflow:auto;padding:18px 20px;margin:0}
 .pbody pre{white-space:pre-wrap;word-break:break-word;margin:0;
@@ -337,50 +368,93 @@ h2{font-size:13px;font-weight:600;color:var(--faint);letter-spacing:.08em;
   padding:11px 18px;border-radius:11px;font-size:13.5px;z-index:30;
   transition:transform .3s cubic-bezier(.2,.8,.25,1);box-shadow:var(--shadow)}
 .toast.on{transform:translate(-50%,0)}
-@media (max-width:640px){
+
+@media (max-width:860px){
+  #shell{grid-template-columns:1fr}
+  aside{position:static;height:auto;flex-direction:row;align-items:center;
+    padding:12px 16px;border-right:0;border-bottom:1px solid var(--line);gap:4px}
+  .brand{padding:0 14px 0 0}
+  .navlbl,.sidefoot .vault{display:none}
+  .nav{width:auto;padding:9px 12px}
+  .sidefoot{margin:0 0 0 auto;border:0;padding:0;flex-direction:row}
+  main{padding:24px 18px 70px}
   .nrow{grid-template-columns:1fr auto;row-gap:8px}
   .ninfo{grid-column:1;text-align:left}
-  .vault{display:none}
 }
 </style></head><body>
-<header><div class="hwrap">
+<div id="shell">
+<aside>
   <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none">
     <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h3l2 2.5h8A2.5 2.5 0 0 1 21 11v6a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17z" fill="#0c0e11"/>
     <circle cx="17.5" cy="6.8" r="2.2" fill="#0c0e11"/></svg></span>
     Vision Docs</div>
-  <span class="dot" title="Đang chạy"></span>
-  <span class="vault" title=\"""" + html.escape(VAULT) + """">""" + html.escape(VAULT) + """</span>
-</div></header>
+  <div class="navlbl">Menu</div>
+  <button class="nav on" id="nav-up" data-v="upload">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0-4 4m4-4 4 4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+    Nạp tài liệu</button>
+  <button class="nav" id="nav-lib" data-v="library">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg>
+    Thư viện <span class="nbadge" id="navCount">—</span></button>
+  <div class="sidefoot">
+    <span class="srv"><span class="dot"></span> server đang chạy</span>
+    <div class="vault" title=\"""" + html.escape(VAULT) + """">""" + html.escape(VAULT) + """</div>
+  </div>
+</aside>
+
 <main>
-  <div class="hero">
-    <div><h1>Thả tài liệu, nhận note.</h1>
-      <p>File được OCR bằng Vision ngay trên máy anh — không gửi đi đâu cả.
-      Note <span class="mono">.md</span> vào Vault, sẵn sàng cho Jan.</p></div>
-    <span class="count" id="count">—</span>
-  </div>
+  <section class="view on" id="view-upload">
+    <div class="vhead vrow">
+      <div><h1>Nạp tài liệu</h1>
+        <p>OCR bằng Vision ngay trên máy — không gửi đi đâu cả. Xong tự thành note cho Jan.</p></div>
+    </div>
 
-  <div id="drop" tabindex="0" role="button" aria-label="Chọn hoặc thả file">
-    <div class="tz"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"
-      stroke="#e08a5c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 15V4m0 0L8 8m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></div>
-    <b>Thả file vào đây, hoặc bấm để chọn</b>
-    <small>OCR tuần tự — file nào xong là hiện kết quả ngay bên dưới</small>
-    <div class="kinds"><span class="kind">PDF</span><span class="kind">DOCX</span>
-      <span class="kind">MD</span><span class="kind">TXT</span><span class="kind">PNG · JPG</span>
-      <span class="kind">HEIC</span><span class="kind">TIFF</span></div>
-    <input id="file" type="file" multiple hidden
-       accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.heic,.tiff,.webp,.bmp">
-  </div>
+    <div id="drop" tabindex="0" role="button" aria-label="Chọn hoặc thả file">
+      <div class="tz"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+        stroke="#e08a5c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 15V4m0 0L8 8m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></div>
+      <div style="min-width:0">
+        <b>Thả file vào đây, hoặc bấm để chọn</b>
+        <small>PDF scan, DOCX, ảnh chụp giấy tờ… đều đọc được</small>
+        <div class="kinds"><span class="kind">PDF</span><span class="kind">DOCX</span>
+          <span class="kind">MD</span><span class="kind">TXT</span><span class="kind">PNG · JPG</span>
+          <span class="kind">HEIC</span><span class="kind">TIFF</span></div>
+      </div>
+      <input id="file" type="file" multiple hidden
+         accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.heic,.tiff,.webp,.bmp">
+    </div>
 
-  <div id="jobs" aria-live="polite"></div>
-  <h2>Notes trong vault</h2>
-  <div id="notes"></div>
+    <div class="panel">
+      <div class="phead"><h2>Hàng đợi</h2><span class="qstat" id="qstat"></span></div>
+      <div class="jlist" id="qactive" aria-live="polite"></div>
+      <div class="empty-q" id="qempty">Chưa có file nào — thả lên khung phía trên để bắt đầu</div>
+    </div>
+
+    <div class="panel" id="pdone" hidden>
+      <div class="phead"><h2>Đã xử lý</h2><span class="qstat" id="qdonestat"></span></div>
+      <div class="jlist" id="qdone"></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-library">
+    <div class="vhead vrow">
+      <div><h1>Thư viện</h1><p id="libsub">—</p></div>
+      <div class="chips">
+        <button class="chip on" data-f="all">Tất cả</button>
+        <button class="chip" data-f="Inbox">Inbox</button>
+        <button class="chip" data-f="Notes">Notes</button>
+      </div>
+    </div>
+    <div id="notes"></div>
+  </section>
 </main>
+</div>
 
 <div id="scrim"></div>
 <aside id="panel" aria-label="Xem trước note">
-  <div class="phead"><span class="t" id="ptitle">—</span>
-    <a id="pdl" class="" href="#" style="font:500 13px/1 var(--sans);color:var(--accent);
+  <div class="pheadp"><span class="t" id="ptitle">—</span>
+    <a id="pdl" href="#" style="font:500 13px var(--sans);color:var(--accent);
       text-decoration:none;padding:7px 12px;border:1px solid #e08a5c33;border-radius:8px">Tải .md</a>
     <button class="xbtn" id="px" aria-label="Đóng">✕</button></div>
   <div class="pbody"><pre id="pbody"></pre></div>
@@ -393,8 +467,21 @@ const $=s=>document.querySelector(s);
 function fjson(url,opts={},ms=6000){
  const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);
  return fetch(url,{...opts,signal:c.signal}).finally(()=>clearTimeout(t));}
-const drop=$('#drop'),fi=$('#file'),jobsEl=$('#jobs'),notesEl=$('#notes');
-let z=0;
+
+/* ---------- menu ---------- */
+const views={upload:$('#view-upload'),library:$('#view-library')};
+function showView(v){
+ for(const k in views)views[k].classList.toggle('on',k===v);
+ $('#nav-up').classList.toggle('on',v==='upload');
+ $('#nav-lib').classList.toggle('on',v==='library');
+ window.scrollTo({top:0,behavior:'smooth'});}
+$('#nav-up').onclick=()=>showView('upload');
+$('#nav-lib').onclick=()=>showView('library');
+
+/* ---------- dropzone ---------- */
+const drop=$('#drop'),fi=$('#file');
+const qActive=$('#qactive'),qDone=$('#qdone'),qEmpty=$('#qempty'),
+      pDone=$('#pdone'),qStat=$('#qstat'),qDoneStat=$('#qdonestat');
 drop.onclick=()=>fi.click();
 drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fi.click();}};
 ['dragover','dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{
@@ -405,62 +492,102 @@ drop.addEventListener('mousemove',e=>{const r=drop.getBoundingClientRect();
  drop.style.setProperty('--my',(e.clientY-r.top)+'px');});
 fi.onchange=()=>send(fi.files);
 
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+ .replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+
 async function send(fs){
  if(!fs||!fs.length)return;
  const fd=new FormData();[...fs].forEach(f=>fd.append('files',f));
  drop.classList.remove('over');
- let r;try{r=await(await fetch('/upload',{method:'POST',body:fd})).json();}
+ let r;try{r=await(await fjson('/upload',{method:'POST',body:fd})).json();}
  catch(e){toast('Không tải lên được — server có chạy không?');return;}
  r.jobs.forEach(j=>{
-  if(j.dup){return;}          /* đã có job này — không thêm card đúp */
+  if(j.dup){return;}
   if(j.error){
-   const d=document.createElement('div');d.className='job';
-   d.innerHTML=`<span class="jstat fail" style="grid-column:1">⚠</span>
+   const d=document.createElement('div');d.className='job';d.dataset.err='1';
+   d.innerHTML=`<span class="jstatus" style="color:var(--err)">⚠</span>
    <div><div class="jname">${j.name}</div></div>
-   <span class="jstat fail">${j.error}</span>`;jobsEl.prepend(d);
-   return;}
+   <span class="jact fail">${j.error}</span>`;qActive.prepend(d);return;}
   if(!document.getElementById('j_'+j.id))addCard(j.id,j.name);});
  const allDup=r.jobs.length&&r.jobs.every(j=>j.dup);
- if(allDup)toast('File này đang được OCR rồi — theo dõi card phía trên.');
+ if(allDup)toast('File này đang được OCR rồi — xem ở Hàng đợi.');
  fi.value='';}
 
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
- .replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-
-/* ---- jobs: change-detection — chỉ vẽ lại khi trạng thái thật sự đổi ---- */
-const cards=new Map();                 // id -> last status (bộ nhớ so sánh)
+/* ---------- job cards (change-detection + nhóm active/done) ---------- */
+const cards=new Map();   // id -> {el,status}
+const lastJobs=new Map();// id -> job server gần nhất (cho elapsed)
 function addCard(id,name){
  const d=document.createElement('div');d.className='job';d.id='j_'+id;
- d.style.animationDelay=(z++*40)+'ms';
- d.innerHTML=`<span class="jstat pend" id="s_${id}">•</span>
+ d.innerHTML=`<span class="jstatus pend" id="s_${id}">•</span>
   <div style="min-width:0"><div class="jname">${esc(name)}</div>
-  <div class="jmeta" id="m_${id}"></div></div>
-  <span class="jstat pend" id="t_${id}">đang chờ</span>`;
- jobsEl.prepend(d);
- cards.set(id,'__new');}
+  <div class="jinfo" id="i_${id}">đang chờ trong hàng</div></div>
+  <span class="jact pend" id="t_${id}"><span class="jtime">—</span></span>`;
+ qActive.prepend(d);
+ cards.set(id,{el:d,status:'pending'});
+ qEmpty.style.display='none';}
 
 function apply(j){
- const id=j.id;
- if(!document.getElementById('j_'+id)&&
-    (j.status==='pending'||j.status==='running'))addCard(id,j.name);
- const prev=cards.get(id);
- if(!prev)return;                       // card lỗi format, không theo dõi
- if(prev===j.status)return;             /* KHÔNG đổi gì — bỏ qua, không vẽ */
- cards.set(id,j.status);
+ const id=j.id;let c=cards.get(id);
+ const active=j.status==='pending'||j.status==='running';
+ if(!c){
+  if(active){addCard(id,j.name);c=cards.get(id);}
+  else if(j.status==='done'||j.status==='failed')c=makeDone(j);
+  if(!c)return;}
+ if(c.status===j.status)return;
+ c.status=j.status;
  const st=document.getElementById('s_'+id),tm=document.getElementById('t_'+id),
-       mt=document.getElementById('m_'+id);
- if(j.status==='pending'){st.textContent='•';st.className='jstat pend';
-  tm.className='jstat pend';tm.textContent='đang chờ';mt.textContent='';}
- if(j.status==='running'){st.innerHTML='<span class="spin"></span>';
-  st.className='jstat';tm.className='jstat pend';tm.textContent='đang OCR…';
-  mt.innerHTML='<div class="shimmer"></div>';}
- if(j.status==='done'){st.textContent='✓';st.className='jstat ok';
-  tm.className='jstat ok';
-  tm.innerHTML=`xong · ${j.seconds}s <a href="#" data-note="${esc(j.note)}">xem note</a>`;
-  mt.textContent='→ '+j.note;loadNotes(true);}
- if(j.status==='failed'){st.textContent='✕';st.className='jstat fail';
-  tm.className='jstat fail';tm.textContent=j.error||'lỗi';mt.textContent='';}}
-jobsEl.addEventListener('click',e=>{const a=e.target.closest('[data-note]');
+       inf=document.getElementById('i_'+id);
+ if(j.status==='pending'){st.textContent='•';st.className='jstatus pend';
+  tm.className='jact pend';tm.innerHTML='<span class="jtime">—</span>';
+  inf.textContent='đang chờ trong hàng';}
+ if(j.status==='running'){st.innerHTML='<span class="spin"></span>';st.className='jstatus';
+  tm.className='jact';tm.innerHTML='<span class="jtime pend" id="e_'+id+'">0s</span>';
+  inf.textContent='đang OCR…';
+  c.started=(j.started||j.added)*1000;setBar(c);}
+ if(j.status==='done'){setDone(c,j);}
+ if(j.status==='failed'){setFailed(c,j);}}
+function setDone(c,j){
+ const id=j.id;
+ const st=document.getElementById('s_'+id);
+ st.textContent='✓';st.className='jstatus ok';
+ c.el.querySelector('.jact').outerHTML=
+  `<span class="jact ok">${j.seconds}s&nbsp;<a href="#" data-note="${esc(j.note)}">xem note</a></span>`;
+ c.el.querySelector('.jinfo').textContent='→ '+j.note;
+ moveToDone(c);loadNotes();}
+
+function setFailed(c,j){
+ const id=j.id,st=document.getElementById('s_'+id);
+ st.textContent='✕';st.className='jstatus fail';
+ c.el.querySelector('.jact').outerHTML=
+  `<span class="jact fail">${j.error||'lỗi'}</span>`;
+ c.el.querySelector('.jinfo').textContent='';
+ moveToDone(c);}
+
+function moveToDone(c){
+ qDone.prepend(c.el);
+ c.el.classList.remove('pop');void c.el.offsetWidth;c.el.classList.add('pop');
+ pDone.hidden=false;
+ const n=qDone.children.length;
+ qDoneStat.innerHTML=`<b>${n}</b> file`;
+ while(qDone.children.length>25)qDone.lastChild.remove();}
+
+function makeDone(j){ // job đã xong trước khi trang mở — dựng card thẳng vào "Đã xử lý"
+ const d=document.createElement('div');d.className='job';d.id='j_'+j.id;
+ d.innerHTML=(j.status==='done')
+  ?`<span class="jstatus ok">✓</span>
+    <div style="min-width:0"><div class="jname">${esc(j.name)}</div>
+    <div class="jinfo">→ ${esc(j.note||'')}</div></div>
+    <span class="jact ok">${j.seconds||''}s&nbsp;<a href="#" data-note="${esc(j.note||'')}">xem note</a></span>`
+  :`<span class="jstatus fail">✕</span>
+    <div style="min-width:0"><div class="jname">${esc(j.name)}</div></div>
+    <span class="jact fail">lỗi</span>`;
+ qDone.prepend(d);pDone.hidden=false;
+ qDoneStat.innerHTML=`<b>${qDone.children.length}</b> file`;
+ const c={el:d,status:j.status};cards.set(j.id,c);
+ if(qDone.children.length>25)qDone.lastChild.remove();
+ return c;}
+
+document.addEventListener('click',e=>{const a=e.target.closest('[data-note]');
  if(a){e.preventDefault();openPanel(a.dataset.note);}});
 
 let seenErr=0,dead=false;
@@ -468,49 +595,70 @@ async function poll(){
  if(dead)return;
  try{
   const js=await(await fjson('/jobs')).json();
-  const ids=new Set(js.map(j=>j.id));js.forEach(apply);
-  cards.forEach((_,id)=>{if(!ids.has(id)&&document.getElementById('j_'+id)){
-   document.getElementById('j_'+id).remove();cards.delete(id);}});
+  const ids=new Set(js.map(j=>j.id));
+  js.forEach(j=>lastJobs.set(j.id,j));
+  js.forEach(apply);
+  cards.forEach((c,id)=>{
+   if(!ids.has(id)&&document.getElementById('j_'+id)){c.el.remove();cards.delete(id);}});
+  let nRun=0,nPend=0,nDone=0;
+  js.forEach(j=>{if(j.status==='running')nRun++;else if(j.status==='pending')nPend++;
+   else if(j.status==='done')nDone++;});
+  const runJob=js.find(j=>j.status==='running');
+  qStat.innerHTML=nRun?`đang OCR <b>${nRun}</b>${runJob&&runJob.name?` · ${esc(runJob.name.slice(0,28))}`:''}`
+   :nPend?`chờ <b>${nPend}</b>`:'rảnh';
+  if(!js.some(j=>j.status==='pending'||j.status==='running')&&
+     !qActive.querySelector('.job:not([data-err])'))
+   qEmpty.style.display='';
   seenErr=0;
   try{const m=await(await fjson('/meta')).json();
-   if(m.build!==BUILD){dead=true;                 /* server có bản mới */
+   if(m.build!==BUILD){dead=true;
     toast('Có phiên bản mới — đang tải lại trang…');
     setTimeout(()=>location.reload(),900);}}catch(e){}
  }catch(e){seenErr++;if(seenErr===2)toast('Mất kết nối tới server.');}}
 setInterval(poll,1500);poll();
+/* đồng hồ elapsed cho card đang OCR — nhảy mỗi giây */
+setInterval(()=>{lastJobs.forEach((j,id)=>{
+ const t=document.getElementById('e_'+id);
+ if(t&&j.started)t.textContent=((Date.now()/1000-j.started)|0)+'s';});},1000);
 
-/* ---- notes: chỉ vẽ lại khi dữ liệu thật sự đổi (signature check) ---- */
-let notesSig='';
+/* ---------- notes / library ---------- */
+let notesSig='',filterF='all';
+document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{
+ document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+ ch.classList.add('on');filterF=ch.dataset.f;renderNotes(lastNotes);});
+let lastNotes=[];
 function gkey(n){return n.name+'|'+n.mtime+'|'+n.kb}
-async function loadNotes(force){
+async function loadNotes(){
  let ns;try{ns=await(await fjson('/notes')).json();}catch(e){return;}
  const sig=JSON.stringify(ns.map(gkey));
- if(sig===notesSig&&!force)return;       /* không đổi — không vẽ, không giật */
+ lastNotes=ns;
+ $('#navCount').textContent=ns.length;
+ if(sig===notesSig)return;
  notesSig=sig;
- $('#count').innerHTML=`<b>${ns.length}</b>&nbsp;note${ns.length?
-  `&nbsp;·&nbsp;cập nhật ${new Date().toLocaleTimeString('vi-VN',
-   {hour:'2-digit',minute:'2-digit'})}`:''}`;
- if(!ns.length){notesEl.innerHTML=`<div class="empty">
+ $('#libsub').textContent=ns.length?`${ns.length} note đã OCR — bấm tên để xem trước`
+  :'Vault chưa có note nào — nạp file ở tab "Nạp tài liệu"';
+ renderNotes(ns);}
+function renderNotes(ns){
+ ns=ns.filter(n=>filterF==='all'||n.folder===filterF);
+ if(!ns.length){$('#notes').innerHTML=`<div class="empty">
   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#8f99a5"
    stroke-width="1.5"><path d="M4 5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
-  <div>Vault còn trống — thả file đầu tiên vào khung phía trên.</div></div>`;return;}
- notesEl.innerHTML=ns.map((n,i)=>`<div class="nrow" style="animation-delay:${i*30}ms">
+  <div>${filterF==='all'?'Vault còn trống':'Chưa có note trong '+(filterF==='Inbox'?'Inbox':'Notes')}</div></div>`;return;}
+ $('#notes').innerHTML=ns.map((n,i)=>`<div class="nrow" style="animation-delay:${Math.min(i,12)*30}ms">
   <span class="ftag">${n.folder}</span>
   <span class="nname"><a data-note="${esc(n.name)}" title="Xem trước">${esc(n.name)}</a></span>
   <span class="ninfo">${n.mtime} · ${n.kb} KB</span>
   <span class="acts"><a data-note="${esc(n.name)}">Xem</a>
    <a href="/download/${encodeURIComponent(n.name)}">Tải .md</a></span></div>`).join('');}
-notesEl.addEventListener('click',e=>{const a=e.target.closest('[data-note]');
- if(a){e.preventDefault();openPanel(a.dataset.note);}});
 
-/* ---- preview panel ---- */
+/* ---------- preview panel ---------- */
 const panel=$('#panel'),scrim=$('#scrim');
 async function openPanel(name){
- $('#ptitle').textContent=name.replace(/\.md$/i,'');
+ $('#ptitle').textContent=name.replace(/\\.md$/i,'');
  $('#pbody').textContent='Đang tải…';
  $('#pdl').href='/download/'+encodeURIComponent(name);
  panel.classList.add('open');scrim.classList.add('on');
- try{const t=await(await fetch('/note/'+encodeURIComponent(name))).text();
+ try{const t=await(await fjson('/note/'+encodeURIComponent(name))).text();
   $('#pbody').textContent=t;}
  catch(e){$('#pbody').textContent='Không đọc được note này.';}}
 function closePanel(){panel.classList.remove('open');scrim.classList.remove('on');}
