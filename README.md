@@ -357,3 +357,16 @@ chunks) với checkbox, **chọn nhiều đích sync cùng lúc**. Lưu ý:
   giờ có icon SVG đồng bộ nét 2px với sidebar.
 - Tất cả màu hardcode đã biến hoá thành token (`--line-strong`...), hai
   theme dùng chung 1 bộ biến.
+
+## 👻 Project đã xoá trong Jan vẫn nằm lại? (leak file + cơ chế dọn)
+
+Jan xoá project nhưng **không xoá file `db/project_<id>.db`** trên đĩa (bug/thói
+quen của Jan). Server này giờ phát hiện và xử lý:
+
+- `list_projects()` đánh dấu `alive` theo số thread còn tham chiếu project
+  (thread metadata) — không có thread nào = đã bị xoá trong Jan.
+- Dropdown web chia 2 nhóm: project sống (chọn được) và **"Đã xoá trong Jan
+  (file thừa)"** — gạch ngang, không chọn được, kèm nút `Xoá file`.
+- Xoá = **chuyển vào `~/.Trash`** (không rm cứng, hoàn tác được trong Finder),
+  cần bấm 2 lần (nút đổi thành "Chắc chắn?" trước khi thực hiện). Server từ
+  chối xoá nếu project còn `alive`.

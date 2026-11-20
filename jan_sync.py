@@ -36,8 +36,27 @@ DB_DIR = os.path.join(JAN_DATA, "db")
 CHUNK = 512
 
 
+def _project_refs(pid: str) -> tuple[int, str]:
+    """(#threads referencing pid, name from the newest thread metadata)."""
+    import glob as _g
+    refs, name = 0, ""
+    for tj in sorted(_g.glob(os.path.join(JAN_DATA, "threads", "*",
+                                          "thread.json"))):
+        try:
+            with open(tj, encoding="utf-8") as f:
+                proj = (json.load(f).get("metadata", {}) or {}).get("project") or {}
+        except (json.JSONDecodeError, OSError):
+            continue
+        if proj.get("id") == pid:
+            refs += 1
+            name = proj.get("name") or name
+    return refs, name
+
+
 def list_projects() -> list[dict]:
-    """Every Jan project DB with a best-effort human name."""
+    """Jan project DBs. `alive` = some thread still references it (a db
+    whose threads are gone means the project was deleted in Jan but the
+    app leaks the file on disk)."""
     out = []
     for fp in sorted(glob.glob(os.path.join(DB_DIR, "project_*.db"))):
         pid = os.path.basename(fp)[len("project_"):-len(".db")]
@@ -50,27 +69,28 @@ def list_projects() -> list[dict]:
             con.close()
         except sqlite3.Error:
             continue
-        out.append({"id": pid, "name": _project_name(pid) or pid,
+        refs, name = _project_refs(pid)
+        out.append({"id": pid, "name": name or pid, "refs": refs,
+                    "alive": refs > 0,
                     "db": fp, "files": files, "chunks": chunks})
     return out
 
 
-def _project_name(pid: str) -> str:
-    """Project name lives in thread metadata (`threads/*/thread.json`)."""
-    try:
-        import glob as _g
-        for tj in _g.glob(os.path.join(JAN_DATA, "threads", "*", "thread.json")):
-            try:
-                with open(tj, encoding="utf-8") as f:
-                    meta = json.load(f).get("metadata", {}) or {}
-                proj = meta.get("project") or {}
-                if proj.get("id") == pid:
-                    return proj.get("name") or ""
-            except (json.JSONDecodeError, OSError):
-                continue
-    except Exception:  # noqa BLE001
-        pass
-    return ""
+def purge_project(pid: str) -> str:
+    """Move a DEAD project db to ~/.Trash (recoverable). Refuses live ones."""
+    for p in list_projects():
+        if p["id"] == pid:
+            if p["alive"]:
+                raise ValueError("project còn sống trong Jan — không xoá được")
+            dst = os.path.expanduser(f"~/.Trash/{os.path.basename(p['db'])}")
+            i = 1
+            while os.path.exists(dst):
+                dst = os.path.expanduser(
+                    f"~/.Trash/{os.path.basename(p['db'])}.{i}")
+                i += 1
+            os.rename(p["db"], dst)
+            return dst
+    raise FileNotFoundError(f"không có project {pid}")
 
 
 def _conn(db: str) -> sqlite3.Connection:

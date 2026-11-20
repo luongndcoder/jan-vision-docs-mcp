@@ -259,6 +259,17 @@ def jan_sync_ep(body: dict):
     return {"projects": per}
 
 
+@app.post("/jan-purge")
+def jan_purge_ep(body: dict):
+    """Xoá file DB của project ĐÃ XOÁ trong Jan (chuyển vào ~/.Trash)."""
+    try:
+        return {"ok": True, "trashed": jan_sync.purge_project(body.get("id") or "")}
+    except ValueError as e:
+        return {"error": str(e)}
+    except FileNotFoundError as e:
+        return {"error": str(e)}
+
+
 _FAVICON = ("data:image/svg+xml," +
             "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
             "%3Crect width='64' height='64' rx='16' fill='%23e08a5c'/%3E"
@@ -492,6 +503,21 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .pname{font-weight:500;font-size:13.5px}
 .pmeta{margin-left:auto;font:400 10.5px var(--mono);color:var(--faint)}
 .pempty{padding:11px 12px;color:var(--faint);font-size:13px}
+
+).psep{height:1px;background:var(--line);margin:6px 4px}
+.plabel{font:600 10px var(--sans);letter-spacing:.1em;text-transform:uppercase;
+ color:var(--faint);padding:7px 9px 4px}
+.prow.dead{cursor:default;opacity:.75}
+.prow.dead:hover{background:none;color:var(--muted)}
+.prow.dead .pname{text-decoration:line-through;text-decoration-color:var(--faint)}
+.prow.dead .pchk{border-style:dashed;border-color:var(--line)}
+.ppurge{margin-left:10px;font:500 11px var(--sans);color:var(--err);cursor:pointer;
+ background:none;border:1px solid var(--err);padding:4px 9px;border-radius:7px;
+ transition:background .15s,transform .1s}
+.ppurge:hover{background:#d9695a1a}
+.ppurge:active{transform:translateY(1px)}
+.ppurge.armed{background:var(--err);color:#fff}
+.pshort{font:400 10px var(--mono);color:var(--faint)}
 
 /* ---------- lang chips ---------- */
 .langbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:12px}
@@ -858,24 +884,49 @@ function projBtnText(){
   n===1?((projList.find(p=>selProjs.has(p.id))||{}).name||'\u2014')
        :`${n} project`; }
 function renderProjPop(){
- $('#projpop').innerHTML=projList.length?projList.map(p=>
-  `<div class="prow ${selProjs.has(p.id)?'on':''}" data-p="${p.id}"
+ const alive=projList.filter(p=>p.alive),dead=projList.filter(p=>!p.alive);
+ const row=p=>`<div class="prow ${selProjs.has(p.id)?'on':''}" data-p="${p.id}"
    role="option" aria-selected="${selProjs.has(p.id)}">
    <span class="pchk">\u2713</span><span class="pname">${esc(p.name)}</span>
-   <span class="pmeta">${p.files} file \u00b7 ${p.chunks} chunks</span></div>`).join('')
-  :'<div class="pempty">Ch\u01b0a c\u00f3 project n\u00e0o trong Jan \u2014 t\u1ea1o project r\u1ed3i quay l\u1ea1i.</div>';
- document.querySelectorAll('.prow').forEach(r=>r.onclick=e=>{
+   <span class="pmeta">${p.files} file \u00b7 ${p.chunks} chunks</span></div>`;
+ const drow=d=>`<div class="prow dead">
+   <span class="pchk"></span>
+   <span style="min-width:0"><span class="pname">${esc(d.name)}</span>
+     <div class="pshort">${d.db.split('/').pop()}</div></span>
+   <span class="pmeta">${d.files} file \u00b7 ${d.chunks>999?
+     (d.chunks/1000).toFixed(1)+'k':d.chunks} chunks</span>
+   <button class="ppurge" data-purge="${d.id}"
+     title="Chuyển file DB vào Trash — hoàn tác được">Xoá file</button></div>`;
+ $('#projpop').innerHTML=
+  (alive.length?alive.map(row).join('')
+   :'<div class="pempty">Ch\u01b0a c\u00f3 project n\u00e0o trong Jan \u2014 t\u1ea1o project r\u1ed3i quay l\u1ea1i.</div>')
+  +(dead.length?`<div class="psep"></div><div class="plabel">\u0110\u00e3 xo\u00e1 trong Jan (file th\u1eeba)</div>${dead.map(drow).join('')}`:'');
+ document.querySelectorAll('.prow:not(.dead)').forEach(r=>r.onclick=e=>{
   e.stopPropagation();
   const id=r.dataset.p;
   if(selProjs.has(id))selProjs.delete(id);else selProjs.add(id);
   localStorage.setItem('vd.projs',JSON.stringify([...selProjs]));
   r.classList.toggle('on',selProjs.has(id));
   r.setAttribute('aria-selected',selProjs.has(id));
-  projBtnText();loadJan();});}
+  projBtnText();loadJan();});
+ document.querySelectorAll('.ppurge').forEach(b=>b.onclick=async e=>{
+  e.stopPropagation();
+  if(!b.classList.contains('armed')){          /* bấm 1: cảnh báo */
+   b.classList.add('armed');b.dataset.t=setTimeout(()=>{b.classList.remove('armed');
+    b.textContent='Xo\u00e1 file';},2600);
+   b.textContent='Ch\u1eafc ch\u1eafn?';return;}
+  clearTimeout(b.dataset.t);
+  try{const r=await(await fjson('/jan-purge',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({id:b.dataset.purge})})).json();
+   if(r.ok){toast('\u0110\u00e3 chuy\u1ec3n file v\u00e0o Trash \u2014 ho\u00e0n t\u00e1c \u1edf Finder',true);}
+   else toast(r.error||'kh\u00f4ng xo\u00e1 \u0111\u01b0\u1ee3c');}
+  catch(err){toast('kh\u00f4ng k\u1ebft n\u1ed1i \u0111\u01b0\u1ee3c');}
+  loadProjects();});}
 async function loadProjects(){
  try{projList=await(await fjson('/projects')).json();}catch(e){projList=[]}
  if(!projList.length){$('#projwrap').style.display='none';renderNotes(lastNotes);return;}
- const ids=new Set(projList.map(p=>p.id));
+ const ids=new Set(projList.filter(p=>p.alive).map(p=>p.id));
  selProjs=new Set([...selProjs].filter(id=>ids.has(id)));
  renderProjPop();projBtnText();loadJan();}
 $('#projbtn').onclick=e=>{e.stopPropagation();
