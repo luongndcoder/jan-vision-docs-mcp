@@ -248,7 +248,8 @@ Do not skip or bypass the SHA256 check.
 
 Step 4 — Verify (all must pass; fix and re-verify if not):
 - `.venv/bin/python -c "import server"` runs without error (from repo dir).
-- `launchctl list | grep ai.jan.visdocs.watch` shows the watcher.
+- `launchctl list | grep ai.jan.visdocs` shows `watch` and `webui` agents.
+- `curl -s http://127.0.0.1:8765/healthz` returns "ok" (web upload UI).
 - Drop ANY test file (pdf/docx/md/png) into <vault>/_dropbox/, wait up to
   90 s, confirm a new .md note appears in <vault>/Inbox/.
 - In the repo dir, run:
@@ -265,3 +266,23 @@ commands. Never claim verification you did not actually perform.
 > Ghi chú: các biến môi trường giữ tiền tố `PDF_OCR_*` (`PDF_OCR_VAULT`,
 > `PDF_OCR_LANGS`, `PDF_OCR_EMB_MODEL`...) để tương thích ngược — đổi tên
 > repo/server không ảnh hưởng chúng.
+
+## 🌐 Web UI upload (chỉ localhost)
+
+Cho người dùng không rành Finder/vault: mở **http://127.0.0.1:8765** — trang web
+kéo-thả file (PDF/DOCX/MD/TXT/ảnh), hiện tiến trình OCR từng file thành công/lỗi
+theo thời gian thực, liệt kê note trong vault, xem trước và tải file `.md`.
+
+```
+webui.py            ← FastAPI, bind 127.0.0.1 (máy khác KHÔNG truy cập được)
+install_webui.sh    ← launchd ai.jan.visdocs.webui (KeepAlive, chạy nền)
+POST /upload        ← xếp hàng, 1 worker OCR tuần tự (Vision + embedding)
+GET  /jobs          ← trạng thái từng file: pending → running → done/failed
+                    ← file gốc sau khi OCR chuyển vào Vault/_done_web/
+```
+
+- Vault/port: env `PDF_OCR_VAULT`, `PDF_OCR_WEBUI_PORT` (mặc định 8765).
+- Không đụng `_dropbox/` — upload web và watcher hoạt động song song không
+  xử lý trùng file.
+- Cài: `bash install_webui.sh` (install.sh tự gọi). Gỡ: `launchctl bootout
+  gui/$(id -u) ~/Library/LaunchAgents/ai.jan.visdocs.webui.plist`.

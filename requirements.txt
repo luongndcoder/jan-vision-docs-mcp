@@ -5,3 +5,6 @@ pyobjc-framework-Cocoa
 pyobjc-framework-CoreServices
 pypdf
 python-docx
+fastapi
+uvicorn
+python-multipart
