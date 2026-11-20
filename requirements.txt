@@ -1,0 +1,7 @@
+mcp<2
+pyobjc-framework-Vision
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa
+pyobjc-framework-CoreServices
+pypdf
+python-docx
