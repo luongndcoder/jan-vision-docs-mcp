@@ -313,3 +313,19 @@ thêm/đổi thì re-index (DELETE + INSERT transaction).
 Yêu cầu duy nhất: đã có project trong Jan (tạo 1 lần trong app).
 Lưu ý nếu vault dùng Obsidian di chuyển note sau khi sync, chạy lại sync
 để cập nhật path mới.
+
+## 🌏 Chọn ngôn ngữ OCR (từng lần nạp)
+
+Dưới khung thả file có **chips ngôn ngữ**: Việt · Anh · Trung giản · Trung
+phồn · Nhật · Hàn · Pháp · Đức · Nga — bấm chọn nhiều cái, lựa chọn được
+nhớ theo máy (localStorage). Ví dụ sách Trung: bật *Trung giản* (tắt bớt
+vi/en nếu muốn nhanh).
+
+- Mọi upload đi kèm `langs` → job dùng đúng bộ ngôn ngữ đó, frontmatter ghi
+  `ocr_langs` tương ứng; card hàng đợi hiển thị languages đang dùng.
+- Watcher `_dropbox/` vẫn dùng `PDF_OCR_LANGS` mặc định — muốn tiếng Trung
+  qua watcher thì `launchctl setenv`/sửa plist, hoặc dùng web cho từng file.
+- Vision Live Text hỗ trợ đầy đủ Hán (zh-Hans/zh-Hant) — đã test render
+  PingFang sạch: OCR đúng 100% ký tự.
+- Tìm kiếm sau đó vẫn chạy cross-language vì bge-m3 đa ngữ (tier-2 keyword
+  yếu với từ 1-2 ký tự Hán, tier semantic & exact-phrase là chính).

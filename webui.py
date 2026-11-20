@@ -31,7 +31,7 @@ import time
 import uuid
 
 import jan_sync
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 import uvicorn
 
@@ -41,6 +41,12 @@ VAULT = os.path.abspath(os.path.expanduser(
     os.environ.get("PDF_OCR_VAULT", "~/Documents/Vault")))
 STAGE = os.path.join(HERE, "uploads")
 os.makedirs(STAGE, exist_ok=True)
+
+OCR_LANGS = {  # Vision Live Text codes -> label tiếng Việt
+    "vi-VN": "Việt", "en-US": "Anh", "zh-Hans": "Trung giản",
+    "zh-Hant": "Trung phồn", "ja-JP": "Nhật", "ko-KR": "Hàn",
+    "fr-FR": "Pháp", "de-DE": "Đức", "ru-RU": "Nga",
+}
 
 SUPPORTED = {".pdf", ".docx", ".md", ".markdown", ".txt", ".text",
              ".png", ".jpg", ".jpeg", ".heic", ".heif", ".tiff", ".tif",
@@ -67,7 +73,8 @@ def _worker() -> None:
         job["started"] = time.time()
         t0 = time.time()
         try:
-            r = json.loads(se.ingest_document(path=job["src"]))
+            r = json.loads(se.ingest_document(
+                path=job["src"], languages=job.get("langs")) or "{}")
             job["status"] = "done"
             job["note"] = os.path.basename(r.get("written", ""))
             job["seconds"] = round(time.time() - t0, 1)
@@ -99,7 +106,12 @@ def meta():
 
 
 @app.post("/upload")
-async def upload(files: list[UploadFile] = File(...)):
+async def upload(files: list[UploadFile] = File(...),
+                 langs: str = Form(None)):
+    """langs = comma-separated Vision language codes (vi-VN,en-US,...);
+    defaults to PDF_OCR_LANGS. Fewer languages -> faster recognition."""
+    use_langs = ",".join([c for c in (langs or "").split(",")
+                          if c in OCR_LANGS]) or None
     out = []
     for f in files:
         base = os.path.basename(f.filename or "file")
@@ -123,7 +135,8 @@ async def upload(files: list[UploadFile] = File(...)):
         with open(dst, "wb") as fh:
             fh.write(await f.read())
         JOBS[jid] = {"id": jid, "name": base, "src": dst,
-                     "status": "pending", "added": time.time()}
+                     "status": "pending", "added": time.time(),
+                     "langs": use_langs}
         Q.put(jid)
         out.append({"id": jid, "name": base, "status": "pending"})
     return {"jobs": out}
@@ -426,6 +439,16 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   transition:transform .3s cubic-bezier(.2,.8,.25,1);box-shadow:var(--shadow)}
 .toast.on{transform:translate(-50%,0)}
 
+/* ---------- lang chips ---------- */
+.langbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:12px}
+.langbar .ll{font-size:12.5px;color:var(--muted);margin-right:2px}
+.lchip{font:500 12px var(--sans);color:var(--faint);cursor:pointer;user-select:none;
+ background:none;border:1px solid var(--line);padding:5px 11px;border-radius:999px;
+ transition:color .18s,border-color .18s,background .18s}
+.lchip:hover{color:var(--text)}
+.lchip.on{color:var(--text);border-color:#e08a5c55;background:#e08a5c12}
+.langbar small{color:var(--faint);font-size:11.5px;margin-left:auto}
+
 /* ---------- jan sync ---------- */
 .projbar{display:flex;gap:10px;align-items:center;margin:2px 0 16px;flex-wrap:wrap}
 .projbar label{color:var(--muted);font-size:13px}
@@ -498,6 +521,19 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
         <div class="kinds"><span class="kind">PDF</span><span class="kind">DOCX</span>
           <span class="kind">MD</span><span class="kind">TXT</span><span class="kind">PNG · JPG</span>
           <span class="kind">HEIC</span><span class="kind">TIFF</span></div>
+        <div class="langbar" id="langbar" title="Ngôn ngữ OCR cho lần nạp này">
+          <span class="ll">Ngôn ngữ</span>
+          <button type="button" class="lchip on" data-l="vi-VN">Việt</button>
+          <button type="button" class="lchip on" data-l="en-US">Anh</button>
+          <button type="button" class="lchip" data-l="zh-Hans">Trung giản</button>
+          <button type="button" class="lchip" data-l="zh-Hant">Trung phồn</button>
+          <button type="button" class="lchip" data-l="ja-JP">Nhật</button>
+          <button type="button" class="lchip" data-l="ko-KR">Hàn</button>
+          <button type="button" class="lchip" data-l="fr-FR">Pháp</button>
+          <button type="button" class="lchip" data-l="de-DE">Đức</button>
+          <button type="button" class="lchip" data-l="ru-RU">Nga</button>
+          <small>chọn đúng ngôn ngữ để OCR chính xác</small>
+        </div>
       </div>
       <input id="file" type="file" multiple hidden
          accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.heic,.tiff,.webp,.bmp">
@@ -562,6 +598,21 @@ function showView(v){
 $('#nav-up').onclick=()=>showView('upload');
 $('#nav-lib').onclick=()=>showView('library');
 
+/* ---------- ngôn ngữ OCR ---------- */
+let selLangs=new Set();
+function restoreLangs(){
+ try{selLangs=new Set(JSON.parse(localStorage.getItem('vd.langs')||''))}catch(e){selLangs=new Set()}
+ if(!selLangs.size)selLangs=new Set(['vi-VN','en-US']);
+ document.querySelectorAll('.lchip').forEach(c=>
+  c.classList.toggle('on',selLangs.has(c.dataset.l)));}
+document.querySelectorAll('.lchip').forEach(c=>c.onclick=e=>{
+ e.stopPropagation();              /* không mở file dialog khi bấm chip */
+ const l=c.dataset.l;
+ if(selLangs.has(l))selLangs.delete(l);else selLangs.add(l);
+ if(!selLangs.size)selLangs.add(l); /* luôn giữ ít nhất 1 ngôn ngữ */
+ c.classList.toggle('on',selLangs.has(l));
+ localStorage.setItem('vd.langs',JSON.stringify([...selLangs]));});
+
 /* ---------- dropzone ---------- */
 const drop=$('#drop'),fi=$('#file');
 const qActive=$('#qactive'),qDone=$('#qdone'),qEmpty=$('#qempty'),
@@ -582,6 +633,7 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
 async function send(fs){
  if(!fs||!fs.length)return;
  const fd=new FormData();[...fs].forEach(f=>fd.append('files',f));
+ fd.append('langs',[...selLangs].join(','));
  drop.classList.remove('over');
  let r;try{r=await(await fjson('/upload',{method:'POST',body:fd})).json();}
  catch(e){toast('Không tải lên được — server có chạy không?');return;}
@@ -600,12 +652,13 @@ async function send(fs){
 /* ---------- job cards (change-detection + nhóm active/done) ---------- */
 const cards=new Map();   // id -> {el,status}
 const lastJobs=new Map();// id -> job server gần nhất (cho elapsed)
-function addCard(id,name){
+function addCard(id,name,langs){
+ const lg=langs||[...selLangs].join(',');
  const d=document.createElement('div');d.className='job';d.id='j_'+id;
  d.innerHTML=`<span class="jstatus pend" id="s_${id}">•</span>
   <div style="min-width:0"><div class="jname">${esc(name)}</div>
   <div class="jinfo" id="i_${id}">đang chờ trong hàng</div></div>
-  <span class="jact pend" id="t_${id}"><span class="jtime">—</span></span>`;
+  <span class="jact pend"><span class="jtime">${lg}</span></span>`;
  qActive.prepend(d);
  cards.set(id,{el:d,status:'pending'});
  qEmpty.style.display='none';}
@@ -614,7 +667,7 @@ function apply(j){
  const id=j.id;let c=cards.get(id);
  const active=j.status==='pending'||j.status==='running';
  if(!c){
-  if(active){addCard(id,j.name);c=cards.get(id);}
+  if(active){addCard(id,j.name,j.langs);c=cards.get(id);}
   else if(j.status==='done'||j.status==='failed')c=makeDone(j);
   if(!c)return;}
  if(c.status===j.status)return;
@@ -820,7 +873,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
 function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  t.classList.toggle('ok',!!ok);t.classList.add('on');
  setTimeout(()=>t.classList.remove('on'),3200);}
-loadProjects();loadNotes();setInterval(loadNotes,8000);
+restoreLangs();loadProjects();loadNotes();setInterval(loadNotes,8000);
 </script></body></html>"""
 
 
