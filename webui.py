@@ -595,6 +595,7 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
   .ninfo{grid-column:1;text-align:left}
 }
 </style></head><body>
+<div id="jsbadge" style="position:fixed;bottom:8px;right:10px;z-index:50;font:600 10.5px/1 var(--sans);color:#8f99a5;padding:6px 9px;border-radius:8px;background:var(--panel);border:1px solid var(--line);opacity:0;transition:opacity .4s">JS</div>
 <script>
 /* áp theme trước khi vẽ — mặc định SÁNG nếu chưa từng chọn */
 document.documentElement.dataset.theme=
@@ -714,6 +715,15 @@ document.documentElement.dataset.theme=
 <div class="toast" id="toast"></div>
 
 <script>
+window.__vderr=function(e){try{var b=document.getElementById('jsbadge');
+ if(b){b.style.opacity='1';b.textContent='JS lỗi: '+(e&&e.message||e);
+  b.style.color='#e05d4d';}
+ document.title='⚠ '+document.title.replace(/^⚠ /,'');}catch(_){}};
+window.addEventListener('error',function(e){window.__vderr(e.error||e.message)});
+window.addEventListener('unhandledrejection',function(e){window.__vderr(e.reason)});
+</script>
+<script>
+
 const BUILD="__BUILD__";
 const $=s=>document.querySelector(s);
 function fjson(url,opts={},ms=6000){
@@ -1138,7 +1148,14 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-pm]');
 function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  t.classList.toggle('ok',!!ok);t.classList.add('on');
  setTimeout(()=>t.classList.remove('on'),3200);}
-restoreLangs();paintThemeBtn();migrateProjStore();loadProjects();loadNotes();setInterval(loadNotes,8000);
+try{restoreLangs();paintThemeBtn();migrateProjStore();loadProjects();loadNotes();
+ setInterval(loadNotes,8000);
+ const _b=$('#jsbadge');
+ if(_b){_b.style.opacity='1';_b.textContent='✓ JS OK';_b.style.color='#3dab63';}
+}catch(e){
+ const _b=$('#jsbadge');
+ if(_b){_b.style.opacity='1';_b.textContent='JS lỗi: '+e.message;_b.style.color='#e05d4d';}
+ console.error(e);}
 </script></body></html>"""
 
 
