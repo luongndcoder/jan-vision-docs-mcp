@@ -1005,7 +1005,7 @@ async function syncOne(name,btn){
  let tot=0,ok=0,names=[],err='';
  try{const r=await(await fjson('/jan-sync',{method:'POST',
    headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({notes:[name],projects:[...selProjs]})})).json();
+   body:JSON.stringify({notes:[name],projects:[...selProjs]})},900000)).json();
   if(r.error)err=r.error;
   Object.values(r.projects||{}).forEach(pp=>{
    const res=(pp.results||[])[0];
@@ -1024,7 +1024,7 @@ $('#syncall').onclick=async()=>{
  let parts=[],anyFail=false;
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({notes:[],projects:[...selProjs]})})).json();
+  body:JSON.stringify({notes:[],projects:[...selProjs]})},900000)).json();
   if(r.error){toast(r.error);return;}
   Object.values(r.projects||{}).forEach(pp=>{
    const s=pp.summary||{};
@@ -1038,7 +1038,7 @@ async function autoJan(note){
  if(!selProjs.size||!note)return;
  try{const r=await(await fjson('/jan-sync',{method:'POST',
   headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({notes:[note],projects:[...selProjs]})})).json();
+  body:JSON.stringify({notes:[note],projects:[...selProjs]})},900000)).json();
   const names=Object.values(r.projects||{}).map(pp=>pp.name);
   if(names.length)toast(`T\u1ef1 \u0111\u1ed9ng v\u00e0o ${names.join(', ')}: ${note}`,true);
   loadJan(true);}catch(e){}}
