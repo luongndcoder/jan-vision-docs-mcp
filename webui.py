@@ -459,8 +459,28 @@ main{padding:36px 40px 90px;position:relative;z-index:1}
 .pheadp .t{font-weight:600;font-size:14.5px;flex:1;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .pbody{flex:1;overflow:auto;padding:18px 20px;margin:0}
+.pbody{font:400 13.5px/1.8 var(--sans);color:var(--text)}
+.pbody p{margin:0 0 13px}
+.pbody h2{font:700 17px/1.4 var(--sans);margin:20px 0 10px;padding-bottom:6px;
+  border-bottom:1px solid var(--line)}
+.pbody h3{font:650 15px/1.4 var(--sans);margin:16px 0 8px}
+.pbody h4,.pbody h5{font:600 14px/1.4 var(--sans);margin:14px 0 8px}
+.pbody hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+.pbody ul,.pbody ol{margin:0 0 13px;padding-left:22px}
+.pbody li{margin:3px 0}
+.pbody code{font:400 12px var(--mono);background:var(--panel2);
+  border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.pmeta{font:400 11.5px/1.75 var(--mono);background:var(--panel2);
+  border:1px solid var(--line);border-radius:10px;padding:10px 13px;
+  color:var(--muted);margin:0 0 16px}
+.pmeta b{color:var(--accent);font-weight:600}
 .pbody pre{white-space:pre-wrap;word-break:break-word;margin:0;
-  font:400 12.5px/1.7 var(--mono);color:#cdd4dc}
+  font:400 12.5px/1.7 var(--mono);color:var(--text)}
+.pmodes{display:inline-flex;border:1px solid var(--line);border-radius:9px;
+  overflow:hidden;flex:none}
+.pmodes button{font:500 11.5px var(--sans);color:var(--muted);background:transparent;
+  border:0;padding:6px 11px;cursor:pointer;transition:color .15s}
+.pmodes button.on{background:var(--panel2);color:var(--accent)}
 #scrim{position:fixed;inset:0;background:#00000066;opacity:0;pointer-events:none;
   transition:opacity .25s;z-index:15}
 #scrim.on{opacity:1;pointer-events:auto}
@@ -684,10 +704,12 @@ document.documentElement.dataset.theme=
 <div id="scrim"></div>
 <aside id="panel" aria-label="Xem trước note">
   <div class="pheadp"><span class="t" id="ptitle">—</span>
+    <span class="pmodes"><button data-pm="view" class="on">Xem trước</button>
+      <button data-pm="raw">Nguồn</button></span>
     <a id="pdl" href="#" style="font:500 13px var(--sans);color:var(--accent);
       text-decoration:none;padding:7px 12px;border:1px solid #e08a5c33;border-radius:8px">Tải .md</a>
     <button class="xbtn" id="px" aria-label="Đóng">✕</button></div>
-  <div class="pbody"><pre id="pbody"></pre></div>
+  <div class="pbody"><div id="pview"></div><pre id="praw" hidden></pre></div>
 </aside>
 <div class="toast" id="toast"></div>
 
@@ -1060,17 +1082,58 @@ document.addEventListener('click',e=>{if(e.target.closest('#loadmore')){
 
 /* ---------- preview panel ---------- */
 const panel=$('#panel'),scrim=$('#scrim');
+const escH=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function mdInline(s){return escH(s)
+  .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+  .replace(/\*([^*]+)\*/g,'<i>$1</i>')
+  .replace(/`([^`]+)`/g,'<code>$1</code>');}
+function mdToHtml(t){
+ let fm='';
+ const m=t.match(/^---\n([\s\S]*?)\n---\n/);
+ if(m){t=t.slice(m[0].length);
+  fm='<div class="pmeta">'+m[1].split('\n').map(l=>{const i=l.indexOf(':');
+   return i<0?escH(l):'<b>'+escH(l.slice(0,i+1))+'</b>'+escH(l.slice(i+1));}).join('<br>')+'</div>';}
+ let html='',list=null,para=[];
+ const flush=()=>{if(para.length){html+='<p>'+para.map(mdInline).join('<br>')+'</p>';para=[];}};
+ const endList=()=>{if(list){html+='</'+list+'>';list=null;}};
+ for(const raw of t.split('\n')){
+  const l=raw.trim();
+  if(!l){flush();endList();continue;}
+  if(l==='---'){flush();endList();html+='<hr>';continue;}
+  const h=l.match(/^(#{1,5})\s+(.*)$/);
+  if(h){flush();endList();const n=Math.min(h[1].length+1,5);
+   html+='<h'+n+'>'+mdInline(h[2])+'</h'+n+'>';continue;}
+  if(/^[-*]\s+/.test(l)){flush();
+   if(list!=='ul'){endList();list='ul';html+='<ul>';}
+   html+='<li>'+mdInline(l.replace(/^[-*]\s+/,''))+'</li>';continue;}
+  if(/^\d+[.)]\s+/.test(l)){flush();
+   if(list!=='ol'){endList();list='ol';html+='<ol>';}
+   html+='<li>'+mdInline(l.replace(/^\d+[.)]\s+/,''))+'</li>';continue;}
+  if(list)endList();
+  para.push(raw);}
+ flush();endList();
+ return fm+html;}
+let lastNoteText='',pmode='view';
+function paintPanel(){
+ if(pmode==='view'){$('#pview').innerHTML=mdToHtml(lastNoteText);}
+ else{$('#praw').textContent=lastNoteText;}
+ $('#pview').hidden=pmode!=='view';
+ $('#praw').hidden=pmode==='view';
+ document.querySelectorAll('[data-pm]').forEach(x=>
+  x.classList.toggle('on',x.dataset.pm===pmode));}
 async function openPanel(name){
- $('#ptitle').textContent=name.replace(/\\.md$/i,'');
- $('#pbody').textContent='Đang tải…';
+ $('#ptitle').textContent=name.replace(/\.md$/i,'');
+ $('#pview').innerHTML='';$('#praw').textContent='Đang tải…';
  $('#pdl').href='/download/'+encodeURIComponent(name);
  panel.classList.add('open');scrim.classList.add('on');
- try{const t=await(await fjson('/note/'+encodeURIComponent(name))).text();
-  $('#pbody').textContent=t;}
- catch(e){$('#pbody').textContent='Không đọc được note này.';}}
+ try{lastNoteText=await(await fjson('/note/'+encodeURIComponent(name))).text();}
+ catch(e){lastNoteText='Không đọc được note này.';}
+ paintPanel();}
 function closePanel(){panel.classList.remove('open');scrim.classList.remove('on');}
 $('#px').onclick=closePanel;scrim.onclick=closePanel;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
+document.addEventListener('click',e=>{const b=e.target.closest('[data-pm]');
+ if(b){pmode=b.dataset.pm;paintPanel();}});
 
 function toast(msg,ok){const t=$('#toast');t.textContent=msg;
  t.classList.toggle('ok',!!ok);t.classList.add('on');
