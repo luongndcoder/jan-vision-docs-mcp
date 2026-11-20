@@ -642,7 +642,9 @@ def search_notes(query: str, vault_root: str | None = None,
     words = [w for w in _re.findall(_TOK, q)
              if w not in STOP]
     _PAGE_RE = _re.compile(r"^## Trang (\d+)\s*$", _re.M)
-    scored = []  # (distinct, total, file, page, first_idx, seg_txt)
+    cands = []  # (distinct, total, file, page, first_idx, seg_txt, words)
+    df: dict[str, int] = {}  # số trang chứa từng từ khoá (để tính IDF)
+    n_pages = 0
     for sub in (("Notes", "Inbox") if words else ()):
         d = os.path.join(vault, sub)
         if not os.path.isdir(d):
@@ -667,17 +669,26 @@ def search_notes(query: str, vault_root: str | None = None,
                 if not seg.strip():
                     continue
                 words_present = [w for w in words if w in seg]
-                # Phải khớp >= 60% số từ khoá (tối thiểu 1). Âm tiết tiếng Việt
-                # ngắn ("công", "giá") khớp substring khắp nơi, nên trùng 1-2
-                # từ gần như không mang thông tin.
-                if len(words_present) < max(1, -(-len(words) * 3 // 5)):
-                    continue
-                if not _in_range(pno):
+                n_pages += 1
+                for w in words_present:
+                    df[w] = df.get(w, 0) + 1
+                if not words_present or not _in_range(pno):
                     continue
                 total = sum(seg.count(w) for w in words_present)
-                scored.append((len(words_present), total, fp, pno, a, txt[a:b],
-                                words_present))
-    scored.sort(key=lambda r: (-r[0], -r[1]))
+                cands.append((len(words_present), total, fp, pno, a, txt[a:b],
+                              words_present))
+    # Trang phải phủ >= 60% "trọng lượng" query theo IDF. Âm tiết tiếng Việt
+    # phổ biến ("doanh", "thu", "năm", "công") khớp substring khắp nơi nên nhẹ;
+    # từ hiếm / tên riêng ("nike") nặng — thiếu nó thì trang không đạt.
+    import math as _m
+    wt = {w: _m.log((n_pages + 1) / (df.get(w, 0) + 1)) + 0.1 for w in words}
+    need = 0.6 * sum(wt.values())
+    scored = []
+    for r in cands:
+        cov = sum(wt[w] for w in r[6])
+        if cov >= need:
+            scored.append(r + (cov,))
+    scored.sort(key=lambda r: (-r[7], -r[1]))
 
     # TIER 3(a): thử semantic trước khi trả keyword. Lý do: (1) model nhỏ
     # (Jan 4B) hay tự rút gọn câu hỏi thành 2-3 từ; (2) keyword mode match
@@ -724,7 +735,7 @@ def search_notes(query: str, vault_root: str | None = None,
                      "matches": len(_sem), "results": _sem})
 
     results = []
-    for distinct, total, fp, pno, a, seg, wp in scored[:max(1, max_hits)]:
+    for distinct, total, fp, pno, a, seg, wp, _cov in scored[:max(1, max_hits)]:
         paragraphs = [p.strip() for p in seg.split("\n\n") if p.strip()]
         best_paras = [p[:500] for p in paragraphs
                       if any(w in p.lower() for w in wp)][:2]

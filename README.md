@@ -135,7 +135,7 @@ Mục `External` để trống nghĩa là không có kết nối ra ngoài máy.
 - Khớp nguyên văn cụm từ trước.
 - Sau đó semantic search bằng bge-m3 (cross-language, câu tiếng Việt tìm được đoạn tiếng Anh), kết hợp xếp hạng trang theo keyword.
 - Ngưỡng semantic: `SEM_STRONG = 0.60`, `SEM_LOW = 0.52` (dưới `SEM_LOW` coi như không có). Hiệu chỉnh trên vault thật: query rác hoặc lạc đề tối đa 0.566, query có nội dung thật từ 0.67 trở lên.
-- Keyword mode phải khớp ít nhất 60% số từ khoá; tokenizer nhận cả số (`12,8`, `18%`, `2026`).
+- Keyword mode: trang phải phủ ≥ 60% trọng số IDF của query (từ hiếm như tên riêng bắt buộc có, âm tiết phổ biến như "doanh thu", "năm" nhẹ); tokenizer nhận cả số (`12,8`, `18%`, `2026`).
 - YAML frontmatter bị loại khỏi index; excerpt cắt theo đoạn, heading `## Trang N` hoặc `---`.
 - `search_pdf`: nếu PDF đã nạp thì dùng lại note trong Vault (nhanh, semantic); chưa nạp thì OCR rồi khớp nguyên văn (~0.5s/trang). Không tìm được file thì tự rơi về `search_notes`.
 
@@ -144,7 +144,7 @@ Mục `External` để trống nghĩa là không có kết nối ra ngoài máy.
 - **Jan tìm không ra gì dù note đã sync**: Jan còn dùng MiniLM. Chạy `jan_sync.py --embed-check`, làm lại bước đổi embedding model.
 - **"File not found" với file attach trong chat**: attachment inline của Jan không phải file trên đĩa, model chỉ nhận được tên. Server dò theo tên file (Downloads, Desktop, Documents, data của Jan, Spotlight) và nếu vẫn không thấy thì `search_pdf` rơi về `search_notes`. Với PDF scan, nạp bằng web UI thay vì attach inline.
 - **PDF có mật khẩu**: OCR báo lỗi. Mở bằng Preview, export lại không mật khẩu.
-- **Jan xoá project nhưng file DB còn trên đĩa**: dropdown project có mục "Đã xoá trong Jan". Bấm `Xoá file` (2 lần để xác nhận), file chuyển vào `~/.Trash`; server từ chối nếu project còn thread tham chiếu.
+- **Jan xoá project nhưng file DB còn trên đĩa**: danh sách project đọc từ localStorage của Jan (key `thread-management`), DB không có trong đó hiện ở mục "Đã xoá trong Jan". Bấm `Xoá file` (2 lần để xác nhận), file chuyển vào `~/.Trash`; server từ chối nếu project còn thread tham chiếu.
 - **Model gọi sai tool**: kiểm tra đã dán prompt chưa, và mở thread mới.
 
 ## Gỡ cài đặt
