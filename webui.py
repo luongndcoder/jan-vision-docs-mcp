@@ -1099,14 +1099,14 @@ function mdInline(s){return escH(s)
   .replace(/`([^`]+)`/g,'<code>$1</code>');}
 function mdToHtml(t){
  let fm='';
- const m=t.match(/^---\n([\s\S]*?)\n---\n/);
+ const m=t.match(/^---\\n([\s\S]*?)\\n---\\n/);
  if(m){t=t.slice(m[0].length);
-  fm='<div class="pmeta">'+m[1].split('\n').map(l=>{const i=l.indexOf(':');
+  fm='<div class="pmeta">'+m[1].split('\\n').map(l=>{const i=l.indexOf(':');
    return i<0?escH(l):'<b>'+escH(l.slice(0,i+1))+'</b>'+escH(l.slice(i+1));}).join('<br>')+'</div>';}
  let html='',list=null,para=[];
  const flush=()=>{if(para.length){html+='<p>'+para.map(mdInline).join('<br>')+'</p>';para=[];}};
  const endList=()=>{if(list){html+='</'+list+'>';list=null;}};
- for(const raw of t.split('\n')){
+ for(const raw of t.split('\\n')){
   const l=raw.trim();
   if(!l){flush();endList();continue;}
   if(l==='---'){flush();endList();html+='<hr>';continue;}
